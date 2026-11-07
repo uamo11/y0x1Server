@@ -71,7 +71,7 @@ class ActiveHelicopter:
     def get_seat_positions(self):
         """
         Calculates exact world positions for:
-        - Pilot (Seat 0): Inside front window cockpit.
+        - Pilot (Seat 0): Inside front window cockpit without floor clipping.
         - Companion 1 (Seat 1): Exposed on left lateral edge bench.
         - Companion 2 (Seat 2): Exposed on right lateral edge bench.
         """
@@ -80,14 +80,14 @@ class ActiveHelicopter:
         right_x = dir_y
         right_y = -dir_x
         
-        # Conductor: ventana frontal (cabina)
-        pilot_pos = (self.x + dir_x * 2.2, self.y + dir_y * 2.2, self.z - 2.0)
+        # Conductor: ventana frontal (cabina) - elevado sin traspasar el suelo
+        pilot_pos = (self.x + dir_x * 2.0, self.y + dir_y * 2.0, self.z - 3.0)
         
         # Compañero 1: lateral izquierdo en el borde exterior
-        p1_pos = (self.x - right_x * 1.6 - dir_x * 0.4, self.y - right_y * 1.6 - dir_y * 0.4, self.z - 1.4)
+        p1_pos = (self.x - right_x * 1.8 + dir_x * 0.45, self.y - right_y * 1.8 + dir_y * 0.45, self.z - 2.85)
         
         # Compañero 2: lateral derecho en el borde exterior
-        p2_pos = (self.x + right_x * 1.6 - dir_x * 0.4, self.y + right_y * 1.6 - dir_y * 0.4, self.z - 1.4)
+        p2_pos = (self.x + right_x * 1.8 + dir_x * 0.45, self.y + right_y * 1.8 + dir_y * 0.45, self.z - 2.85)
         
         return pilot_pos, p1_pos, p2_pos
 
