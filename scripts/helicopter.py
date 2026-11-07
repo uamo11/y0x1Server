@@ -235,10 +235,15 @@ class ActiveHelicopter:
             self.y = max(10.0, min(502.0, self.y))
             self.z = max(4.0, min(58.0, self.z))
             
-            # Keep pilot inside the cockpit seat (vulnerable to ground fire)
+            # Synchronize helicopter position and heading from the active pilot
             try:
-                self.pilot.world_object.set_position(self.x, self.y, self.z)
-                self.pilot.set_location((self.x, self.y, self.z))
+                ppos = self.pilot.world_object.position.get()
+                self.x = float(ppos[0])
+                self.y = float(ppos[1])
+                self.z = float(ppos[2])
+                ori = self.pilot.world_object.orientation
+                self.yaw = math.atan2(ori.x, -ori.y)
+                self.is_flying = True
             except Exception:
                 pass
                 
@@ -492,16 +497,16 @@ def apply_script(protocol, connection, config):
                             cz = sz + t * oz
                             dist_sq = (GLOBAL_HELI.x - cx)**2 + (GLOBAL_HELI.y - cy)**2 + (GLOBAL_HELI.z - cz)**2
                             
-                            # Helicopter bounding volume radius (3.2 blocks)
-                            if dist_sq <= 3.2**2:
+                            # Helicopter bounding volume radius (7.5 blocks for 3X larger military gunship)
+                            if dist_sq <= 7.5**2:
                                 # Determine weapon damage
                                 weap = getattr(self, 'weapon', 0)
                                 dmg = 45.0 if weap == 0 else (22.0 if weap == 1 else 35.0)
                                 GLOBAL_HELI.take_damage(dmg, attacker=self)
                                 
-                                # If pilot inside and hit is near cockpit, damage pilot directly
+                                # Cockpit vulnerability: 2.8 blocks radius damages the pilot directly from ground!
                                 if GLOBAL_HELI.pilot and not GLOBAL_HELI.pilot.disconnected:
-                                    if dist_sq <= 1.4**2:
+                                    if dist_sq <= 2.8**2:
                                         GLOBAL_HELI.pilot.hit(dmg * 0.7, self, 0)
                     except Exception:
                         pass
