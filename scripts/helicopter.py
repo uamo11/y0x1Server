@@ -281,102 +281,123 @@ class ActiveHelicopter:
                     break
         
         # =========================================================================
-        # CASE A: CONDUCTOR AL MANDO (VUELO PILOTADO ACTIVO)
+        # CASE A: CONDUCTOR AL MANDO (VUELO PILOTADO ACTIVO ESTILO GTA)
         # =========================================================================
         if self.pilot and not self.pilot.disconnected and self.pilot.hp:
-            self.is_flying = True
             self.uncontrolled_crash = False
             inp = getattr(self.pilot, 'heli_inputs', {})
             ori = self.pilot.world_object.orientation
-            
-            # --- 1. Control de Guiñada (Yaw Heading) ---
+            power_factor = 1.0 if self.tier == 3 else (0.75 if self.tier == 2 else 0.50)
+
+            # --- 1. Control de Guiñada (Yaw Heading) desde el Ratón del Conductor ---
             target_yaw = math.atan2(ori.x, -ori.y)
             yaw_diff = (target_yaw - self.yaw + math.pi) % (2 * math.pi) - math.pi
-            self.yaw += yaw_diff * 0.16
-            
-            # --- Efecto Tier 1: Fallo de Rotor de Cola (Giro por Torque) ---
+            turn_speed = yaw_diff * (5.5 * self.tick_dt)
+            self.yaw += turn_speed
+
+            # Efecto Tier 1: Fallo crítico de Rotor de Cola (Giro por Torque incontrolado)
             if self.tier == 1:
-                torque_spin = 2.4 # rad/sec
-                self.yaw += torque_spin * self.tick_dt
-            
+                self.yaw += 2.8 * self.tick_dt
+
             dir_x = math.sin(self.yaw)
             dir_y = -math.cos(self.yaw)
             right_x = dir_y
             right_y = -dir_x
-            
-            # --- 2. Empuje Cíclico y Cabeceo Táctico ---
-            fx = 0.0
-            fy = 0.0
-            self.pitch = 0.0
-            self.roll = 0.0
-            
-            power_factor = 1.0 if self.tier == 3 else (0.75 if self.tier == 2 else 0.50)
-            
-            if inp.get('forward'):
-                fx += dir_x * (5.5 * power_factor)
-                fy += dir_y * (5.5 * power_factor)
-                self.pitch = -0.12 # Cabeceo natural de crucero táctico
-            if inp.get('back'):
-                fx -= dir_x * (3.5 * power_factor)
-                fy -= dir_y * (3.5 * power_factor)
-                self.pitch = 0.10
-            if inp.get('left'):
-                fx -= right_x * (4.2 * power_factor)
-                fy -= right_y * (4.2 * power_factor)
-                self.roll = -0.14
-            if inp.get('right'):
-                fx += right_x * (4.2 * power_factor)
-                fy += right_y * (4.2 * power_factor)
-                self.roll = 0.14
-                
-            # --- 3. Colectivo Vertical (Sustentación Espacio / C) ---
-            fz = 0.0
-            if inp.get('up'):
-                fz -= 6.5 * power_factor # Ascender hacia el cielo (Z negativo)
-            elif inp.get('down'):
-                fz += 5.5                # Descender hacia el suelo
+
+            # --- 2. Colectivo Vertical Estilo GTA (W sube, S baja) ---
+            # En OpenSpades Z: -Z es hacia el cielo (ascender), +Z es hacia el suelo (descender)
+            on_ground = (self.z >= ground_z - 0.35)
+
+            if inp.get('up_w') or inp.get('jump'):
+                # W SUBE: Aceleración progresiva de sustentación hacia arriba (despegue progresivo)
+                target_vz = -10.0 * power_factor
+                self.vz += (target_vz - self.vz) * (4.2 * self.tick_dt)
+                self.is_flying = True
+            elif inp.get('down_s') or inp.get('crouch'):
+                # S BAJA: Descenso progresivo y suave hacia el suelo hasta posarse
+                target_vz = 8.0
+                self.vz += (target_vz - self.vz) * (4.2 * self.tick_dt)
             else:
-                # Vuelo estacionario automático
-                fz = -self.vz * 1.5
-                
-            # Inestabilidad en Tier 2 y Tier 1
+                # Vuelo estacionario automático (Hover Hold suave sin perder altura)
+                if not on_ground:
+                    target_vz = 0.0
+                    self.vz += (target_vz - self.vz) * (5.5 * self.tick_dt)
+                else:
+                    self.vz = 0.0
+
+            # --- 3. Propulsión Horizontal Estilo GTA (Clic Izquierdo Mantenido Acelera) ---
+            target_pitch = 0.0
+            target_roll = 0.0
+
+            if inp.get('click'):
+                # Clic Izquierdo Presionado: Aceleración progresiva hacia adelante en dirección de cámara
+                target_pitch = -0.32 * power_factor # Inclinación realista hacia adelante
+                target_speed = 22.0 * power_factor  # Velocidad de crucero fluida y rápida
+                target_vx = dir_x * target_speed
+                target_vy = dir_y * target_speed
+                self.vx += (target_vx - self.vx) * (3.8 * self.tick_dt)
+                self.vy += (target_vy - self.vy) * (3.8 * self.tick_dt)
+                self.is_flying = True
+            else:
+                # Al soltar el clic: Inercia aerodinámica suave desacelerando hacia hover
+                target_pitch = 0.0
+                drag = max(0.0, 1.0 - 2.2 * self.tick_dt)
+                self.vx *= drag
+                self.vy *= drag
+
+            # --- 4. Viraje Lateral con A y D (Rudder / Strafe) y Alabeo Dinámico ---
+            if inp.get('left_a'):
+                self.vx -= right_x * (9.5 * power_factor) * self.tick_dt
+                self.vy -= right_y * (9.5 * power_factor) * self.tick_dt
+                target_roll -= 0.22
+            if inp.get('right_d'):
+                self.vx += right_x * (9.5 * power_factor) * self.tick_dt
+                self.vy += right_y * (9.5 * power_factor) * self.tick_dt
+                target_roll += 0.22
+
+            # Alabeo bancario natural al girar con el ratón
+            target_roll -= (turn_speed * 4.0) * 0.35
+            target_roll = max(-0.45, min(0.45, target_roll))
+
+            # Inestabilidad en fuselaje dañado
             if self.tier == 2:
-                wobble_x = math.sin(self.time_elapsed * 5.0) * 1.8
-                wobble_y = math.cos(self.time_elapsed * 4.5) * 1.8
-                fx += wobble_x
-                fy += wobble_y
-                self.roll += math.sin(self.time_elapsed * 7.0) * 0.05
+                wobble = math.sin(self.time_elapsed * 5.0) * 1.5
+                self.vx += wobble * self.tick_dt
+                target_roll += math.sin(self.time_elapsed * 7.0) * 0.08
             elif self.tier == 1:
-                wobble_x = math.sin(self.time_elapsed * 8.0) * 3.8
-                wobble_y = math.cos(self.time_elapsed * 7.5) * 3.8
-                fx += wobble_x
-                fy += wobble_y
-                fz += 6.5 # Pérdida constante de sustentación
-                self.pitch += math.sin(self.time_elapsed * 14.0) * 0.16
-                self.roll += math.cos(self.time_elapsed * 13.0) * 0.18
-                
-            # Integración con resistencia aerodinámica del aire
-            self.vx = (self.vx + fx * self.tick_dt) * 0.88
-            self.vy = (self.vy + fy * self.tick_dt) * 0.88
-            self.vz = (self.vz + fz * self.tick_dt) * 0.86
-            
+                wobble = math.sin(self.time_elapsed * 8.0) * 3.5
+                self.vx += wobble * self.tick_dt
+                self.vz += 6.5 * self.tick_dt # Pérdida constante de sustentación
+                target_pitch += math.sin(self.time_elapsed * 12.0) * 0.15
+                target_roll += math.cos(self.time_elapsed * 11.0) * 0.18
+
+            # Interpolación progresiva de Cabeceo (Pitch) y Alabeo (Roll)
+            self.pitch += (target_pitch - self.pitch) * (6.5 * self.tick_dt)
+            self.roll += (target_roll - self.roll) * (6.5 * self.tick_dt)
+
+            # Integración de posición continua
             self.x += self.vx * self.tick_dt
             self.y += self.vy * self.tick_dt
             self.z += self.vz * self.tick_dt
 
-            # Colisión de patines contra la superficie del mapa
+            # Contacto de patines con el suelo (Aterrizaje suave)
             if self.z >= ground_z - 0.2:
                 self.z = ground_z - 0.2
                 if self.vz > 0.0:
                     self.vz = 0.0
-                self.pitch *= 0.8
-                self.roll *= 0.8
-            
+                if not inp.get('up_w') and not inp.get('click'):
+                    self.vx *= 0.6
+                    self.vy *= 0.6
+                    self.pitch *= 0.6
+                    self.roll *= 0.6
+                    if abs(self.vx) < 0.2 and abs(self.vy) < 0.2:
+                        self.is_flying = False
+
             # Límites de vuelo del mapa
             self.x = max(10.0, min(502.0, self.x))
             self.y = max(10.0, min(502.0, self.y))
             self.z = max(4.0, min(58.0, self.z))
-            
+
             # --- Actualizar Posición del Conductor y de los Compañeros ---
             pilot_pos, p1_pos, p2_pos = self.get_seat_positions()
             try:
@@ -458,17 +479,16 @@ class ActiveHelicopter:
                 if self.z > ground_z - 0.2:
                     self.z = ground_z - 0.2
             
-        # Broadcast sync every 2 ticks (10 Hz)
-        if self.sync_counter % 2 == 0:
-            self.broadcast_sync()
+        # Broadcast sync every tick (20 Hz = 50ms) for ultra-smooth network updates
+        self.broadcast_sync()
 
     def broadcast_sync(self):
-        """Sends [HELI_SYNC] metadata to all connected clients."""
+        """Sends [HELI_SYNC] metadata with velocity to all connected clients."""
         pilot_id = self.pilot.player_id if (self.pilot and not self.pilot.disconnected and self.pilot.hp) else -1
         p1_id = self.passengers[0].player_id if (len(self.passengers) > 0 and not self.passengers[0].disconnected and self.passengers[0].hp) else -1
         p2_id = self.passengers[1].player_id if (len(self.passengers) > 1 and not self.passengers[1].disconnected and self.passengers[1].hp) else -1
         is_fly = 1 if (self.is_flying or self.pilot or self.uncontrolled_crash) else 0
-        sync_msg = f"[HELI_SYNC] 1 {self.x:.2f} {self.y:.2f} {self.z:.2f} {self.yaw:.2f} {self.pitch:.2f} {self.roll:.2f} {pilot_id} {is_fly} {int(self.hp)} {int(self.max_hp)} {self.tier} {p1_id} {p2_id}"
+        sync_msg = f"[HELI_SYNC] 1 {self.x:.2f} {self.y:.2f} {self.z:.2f} {self.yaw:.2f} {self.pitch:.2f} {self.roll:.2f} {pilot_id} {is_fly} {int(self.hp)} {int(self.max_hp)} {self.tier} {p1_id} {p2_id} {self.vx:.2f} {self.vy:.2f} {self.vz:.2f}"
         
         for player in self.protocol.players.values():
             if not player.disconnected:
@@ -493,12 +513,13 @@ class ActiveHelicopter:
         # 1. Asiento del Conductor en la Ventana Frontal
         if not self.pilot or self.pilot.disconnected or not self.pilot.hp:
             self.pilot = player
-            self.is_flying = True
+            # Permanece apoyado sobre los patines en el suelo (despegue progresivo real, no teletransportar al cielo)
+            self.is_flying = False
             self.uncontrolled_crash = False
-            # Spool up into hover upon boarding if on ground
-            self.z = max(6.0, self.z - 4.5)
             self.vz = 0.0
-            player.heli_inputs = {'forward': False, 'back': False, 'left': False, 'right': False, 'up': False, 'down': False}
+            self.vx = 0.0
+            self.vy = 0.0
+            player.heli_inputs = {'up_w': False, 'down_s': False, 'left_a': False, 'right_d': False, 'click': False, 'jump': False, 'crouch': False}
             player.is_piloting = True
             player.is_passenger = False
             player.heli_seat = 0
@@ -514,7 +535,7 @@ class ActiveHelicopter:
                 
             player.send_chat("[HELICOPTER] ¡Has tomado los mandos como CONDUCTOR en la ventana frontal!")
             player.send_chat(f"[HELICOPTER] Estado del fuselaje: {int(self.hp)}/{int(self.max_hp)} HP [Nivel {self.tier}]")
-            player.send_chat("[HELICOPTER] [W/S] Volar | [A/D] Viraje | [Espacio] Ascender | [C] Descender | [E] Salir")
+            player.send_chat("[HELICOPTER] Controles estilo GTA: [W] Subir | [S] Bajar | [Clic Izq Mantenido] Acelerar | [A/D] Girar | [E] Salir")
             self.protocol.broadcast_chat(f"[HELICOPTER] {player.name} tomó el asiento del CONDUCTOR en el helicóptero militar.")
             self.broadcast_sync()
             return True
@@ -702,7 +723,7 @@ def apply_script(protocol, connection, config):
     class HelicopterConnection(connection):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
-            self.heli_inputs = {'forward': False, 'back': False, 'left': False, 'right': False, 'up': False, 'down': False}
+            self.heli_inputs = {'up_w': False, 'down_s': False, 'left_a': False, 'right_d': False, 'click': False, 'jump': False, 'crouch': False}
             self.is_piloting = False
             self.is_passenger = False
             self.heli_seat = -1
@@ -716,16 +737,16 @@ def apply_script(protocol, connection, config):
 
         def on_walk_update(self, up, down, left, right):
             if getattr(self, 'is_piloting', False):
-                self.heli_inputs['forward'] = up
-                self.heli_inputs['back'] = down
-                self.heli_inputs['left'] = left
-                self.heli_inputs['right'] = right
+                self.heli_inputs['up_w'] = bool(up)
+                self.heli_inputs['down_s'] = bool(down)
+                self.heli_inputs['left_a'] = bool(left)
+                self.heli_inputs['right_d'] = bool(right)
             super().on_walk_update(up, down, left, right)
 
         def on_animation_update(self, jump, crouch, sneak, sprint):
             if getattr(self, 'is_piloting', False):
-                self.heli_inputs['up'] = jump or sprint
-                self.heli_inputs['down'] = crouch or sneak
+                self.heli_inputs['jump'] = bool(jump)
+                self.heli_inputs['crouch'] = bool(crouch)
             super().on_animation_update(jump, crouch, sneak, sprint)
 
         def on_fall(self, damage):
@@ -770,7 +791,7 @@ def apply_script(protocol, connection, config):
                     promoted.is_piloting = True
                     promoted.is_passenger = False
                     promoted.heli_seat = 0
-                    promoted.heli_inputs = {'forward': False, 'back': False, 'left': False, 'right': False, 'up': False, 'down': False}
+                    promoted.heli_inputs = {'up_w': False, 'down_s': False, 'left_a': False, 'right_d': False, 'click': False, 'jump': False, 'crouch': False}
                     
                     pilot_pos, _, _ = GLOBAL_HELI.get_seat_positions()
                     try:
@@ -805,13 +826,13 @@ def apply_script(protocol, connection, config):
 
         def on_shoot_set(self, fire):
             """
-            Detects gunfire aimed from the ground towards:
-            - Conductor in front window (radio 2.2) -> direct damage to conductor!
-            - Companion 1 on left edge bench (radio 2.0) -> direct damage to companion!
-            - Companion 2 on right edge bench (radio 2.0) -> direct damage to companion!
-            - Helicopter fuselage (radio 7.5) -> damage to aircraft!
+            - If conductor, left click controls GTA forward propulsion/acceleration!
+            - If ground player, detects gunfire aimed towards cockpit, companions or fuselage.
             """
             global GLOBAL_HELI
+            if getattr(self, 'is_piloting', False):
+                self.heli_inputs['click'] = bool(fire)
+                return
             if fire and GLOBAL_HELI and GLOBAL_HELI.active and GLOBAL_HELI.hp > 0.0:
                 if not getattr(self, 'is_piloting', False) and not getattr(self, 'is_passenger', False):
                     try:
