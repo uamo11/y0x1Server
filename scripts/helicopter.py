@@ -254,10 +254,15 @@ class ActiveHelicopter:
             self.z = max(4.0, min(58.0, self.z))
             
             # Keep pilot inside the cockpit seat and airborne
+            dir_x = math.sin(self.yaw)
+            dir_y = -math.cos(self.yaw)
             try:
                 self.pilot.fly = True
-                self.pilot.world_object.set_position(self.x, self.y, self.z)
-                self.pilot.set_location((self.x, self.y, self.z))
+                seat_x = self.x + dir_x * 1.35
+                seat_y = self.y + dir_y * 1.35
+                seat_z = self.z - 1.8
+                self.pilot.world_object.set_position(seat_x, seat_y, seat_z)
+                self.pilot.set_location((seat_x, seat_y, seat_z))
             except Exception:
                 pass
                 
@@ -406,7 +411,7 @@ def heli_command(connection):
         if not GLOBAL_HELI.pilot:
             px, py, pz = connection.world_object.position.get()
             dist = math.sqrt((px - GLOBAL_HELI.x)**2 + (py - GLOBAL_HELI.y)**2 + (pz - GLOBAL_HELI.z)**2)
-            if dist > 18.0:
+            if dist > 25.0:
                 connection.send_chat(f"[HELICOPTER] Estás demasiado lejos del helicóptero ({dist:.1f} bloques). Acércate para subirte.")
                 return
         GLOBAL_HELI.embark(connection)
