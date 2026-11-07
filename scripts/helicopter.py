@@ -1,14 +1,20 @@
 """
-Clean Dynamic Military Helicopter System for Ace of Spades / Piqueserver.
+Advanced Military Helicopter System with Combat, 3 Stability/Health Tiers & Dynamic Aerodynamics.
 
 Features:
 - Spawns parked in world via: /spawn helicopter 1 or /spawn heli
-- Seamless interaction: Walk up to it and press 'E' (or type /heli) to enter as pilot.
+- Interactive boarding: Walk up to it and press 'E' (or type /heli) to enter as pilot.
 - Exit anytime: Press 'E' or /exit to safely disembark.
 - Full aerodynamic flight physics (pitch/roll/yaw vectors, collective lift, momentum, drag).
-- Cero block destruction: 100% clean entity simulation (no map block damage).
-- Real-time client synchronization with high-precision 3D orientation & spatial audio.
-- Anti-Cheat integrated (exempts active pilot from kinematic speed/fly checks).
+- 3 Health & Stability Tiers:
+    * Tier 3 (201-300 HP): "Óptimo / Estable" - 100% power, rock-solid hover, zero turbulence.
+    * Tier 2 (101-200 HP): "Inestable / Daño Motor" - 25% power loss, wind shudder/vibration, drift.
+    * Tier 1 (1-100 HP): "Crítico / Rotor de Cola Comprometido" - Continuous yaw spin, gravity drag, violent bucking.
+    * Tier 0 (0 HP): "Destrucción / Explosión" - Massive explosion, pilot casualty, debris.
+- Vulnerable pilot & Combat Hitboxes:
+    * Ground players can aim at the cockpit and eliminate the pilot directly with sniper/rifle!
+    * Ground gunfire and grenade explosions inflict real-time damage to the helicopter fuselage.
+- Rotors OFF when parked/unmanned; turn ON and spin rapidísimo upon boarding with 3D spatial audio.
 """
 
 import math
@@ -17,11 +23,11 @@ from twisted.internet.task import LoopingCall
 from piqueserver.commands import command, player_only
 
 class ActiveHelicopter:
-    """Manages the 3D position, orientation, aerodynamic physics, and client sync of the helicopter."""
+    """Manages the 3D position, orientation, aerodynamic physics, health tiers and client sync."""
     def __init__(self, protocol):
         self.protocol = protocol
         
-        # Default starting position
+        # Position & Velocity
         self.x = 115.0
         self.y = 230.0
         self.z = 32.0
@@ -34,20 +40,25 @@ class ActiveHelicopter:
         self.pitch = 0.0
         self.roll = 0.0
         
+        # Combat & Health
+        self.max_hp = 300.0
+        self.hp = 300.0
+        self.tier = 3 # 3: Óptimo, 2: Inestable, 1: Crítico, 0: Destruido
+        
         self.pilot = None
         self.is_flying = False
-        self.is_spawned = True
+        self.active = True
         self.time_elapsed = 0.0
         self.sync_counter = 0
         
-        # High-frequency smooth physics update tick (20 Hz = 50ms)
+        # 20 Hz physics update tick (50ms)
         self.tick_dt = 0.05
         self.loop = LoopingCall(self.update_physics)
         self.loop.start(self.tick_dt, now=False)
-        print(f"[HELICOPTER] Military Helicopter System active at ({self.x:.1f}, {self.y:.1f}, {self.z:.1f})")
+        print(f"[HELICOPTER] Military Combat Helicopter active at ({self.x:.1f}, {self.y:.1f}, {self.z:.1f})")
 
     def spawn_at(self, x, y, z, yaw=0.0):
-        """Spawns the helicopter parked at a specified position."""
+        """Spawns or repairs the helicopter parked at a specified position."""
         if self.pilot and not self.pilot.disconnected:
             self.disembark(self.pilot)
             
@@ -60,61 +71,155 @@ class ActiveHelicopter:
         self.yaw = float(yaw)
         self.pitch = 0.0
         self.roll = 0.0
+        self.hp = 300.0
+        self.tier = 3
         self.is_flying = False
-        self.is_spawned = True
+        self.active = True
         self.broadcast_sync()
+
+    def update_tier(self):
+        old_tier = self.tier
+        if self.hp > 200.0:
+            self.tier = 3
+        elif self.hp > 100.0:
+            self.tier = 2
+        elif self.hp > 0.0:
+            self.tier = 1
+        else:
+            self.tier = 0
+            
+        if self.tier != old_tier:
+            if self.tier == 2:
+                self.protocol.broadcast_chat("[HELICOPTER] ¡ADVERTENCIA! Nivel 2: Fuselaje dañado (Estabilidad Inestable / Turbina afectada).")
+                if self.pilot and not self.pilot.disconnected:
+                    self.pilot.send_chat("[HELICOPTER] ¡Turbina dañada! Pérdida de empuje y vibración en mandos.")
+            elif self.tier == 1:
+                self.protocol.broadcast_chat("[HELICOPTER] ¡PELIGRO CRÍTICO! Nivel 1: Rotor de cola comprometido (Pérdida de sustentación).")
+                if self.pilot and not self.pilot.disconnected:
+                    self.pilot.send_chat("[HELICOPTER] ¡ALARMA ROJA! Rotor de cola dañado. El helicóptero gira sin control.")
+            elif self.tier == 0:
+                self.destroy()
+
+    def take_damage(self, amount, attacker=None):
+        if self.hp <= 0.0 or not self.active:
+            return
+            
+        self.hp = max(0.0, self.hp - amount)
+        self.update_tier()
+        
+        if attacker and not attacker.disconnected:
+            tier_str = "Óptimo" if self.tier == 3 else ("Inestable" if self.tier == 2 else ("Crítico" if self.tier == 1 else "Destruido"))
+            attacker.send_chat(f"[HELICOPTER] ¡Impacto certero! Salud: {int(self.hp)}/{int(self.max_hp)} HP [Nivel {self.tier}: {tier_str}]")
+            
+        if self.pilot and not self.pilot.disconnected and attacker != self.pilot:
+            self.pilot.send_chat(f"[HELICOPTER] ¡Fuselaje impactado por {attacker.name if attacker else 'un enemigo'}! (-{int(amount)} HP) | Salud: {int(self.hp)}/300")
+            
+        self.broadcast_sync()
+
+    def destroy(self):
+        """Triggers cataclysmic explosion and kills pilot upon 0 HP."""
+        self.hp = 0.0
+        self.tier = 0
+        self.protocol.broadcast_chat("[HELICOPTER] ¡BOOM! ¡El helicóptero militar ha EXPLOTADO en mil pedazos!")
+        
+        # Eliminate pilot in explosion
+        if self.pilot and not self.pilot.disconnected:
+            p = self.pilot
+            self.disembark(p)
+            try:
+                p.kill(killer=None, kill_type=3, grenade=None)
+            except Exception:
+                pass
+                
+        self.broadcast_sync()
+        self.active = False
 
     def update_physics(self):
         self.time_elapsed += self.tick_dt
         self.sync_counter += 1
+        
+        if not self.active or self.hp <= 0.0:
+            return
         
         if self.pilot and not self.pilot.disconnected:
             self.is_flying = True
             inp = getattr(self.pilot, 'heli_inputs', {})
             ori = self.pilot.world_object.orientation
             
-            # Pilot mouse controls yaw heading
+            # --- 1. YAW HEADING CONTROL ---
             target_yaw = math.atan2(ori.x, -ori.y)
             yaw_diff = (target_yaw - self.yaw + math.pi) % (2 * math.pi) - math.pi
             self.yaw += yaw_diff * 0.16
+            
+            # --- TIER 1 STABILITY EFFECT: TAIL ROTOR FAILURE / TORQUE SPIN ---
+            if self.tier == 1:
+                # Fuselage spins uncontrollably due to lost anti-torque
+                torque_spin = 2.4 # rad/sec
+                self.yaw += torque_spin * self.tick_dt
             
             dir_x = math.sin(self.yaw)
             dir_y = -math.cos(self.yaw)
             right_x = dir_y
             right_y = -dir_x
             
-            # Cyclic Thrust & Aerodynamic Attitude Tilt
+            # --- 2. CYCLIC THRUST & BANKING ---
             fx = 0.0
             fy = 0.0
             self.pitch = 0.0
             self.roll = 0.0
             
+            # Engine power modifier based on damage tier
+            power_factor = 1.0 if self.tier == 3 else (0.75 if self.tier == 2 else 0.50)
+            
             if inp.get('forward'):
-                fx += dir_x * 15.0
-                fy += dir_y * 15.0
+                fx += dir_x * (15.0 * power_factor)
+                fy += dir_y * (15.0 * power_factor)
                 self.pitch = -0.24 # Nose down
             if inp.get('back'):
-                fx -= dir_x * 11.0
-                fy -= dir_y * 11.0
+                fx -= dir_x * (11.0 * power_factor)
+                fy -= dir_y * (11.0 * power_factor)
                 self.pitch = 0.20  # Nose up
             if inp.get('left'):
-                fx -= right_x * 11.0
-                fy -= right_y * 11.0
+                fx -= right_x * (11.0 * power_factor)
+                fy -= right_y * (11.0 * power_factor)
                 self.roll = -0.20  # Bank left
             if inp.get('right'):
-                fx += right_x * 11.0
-                fy += right_y * 11.0
+                fx += right_x * (11.0 * power_factor)
+                fy += right_y * (11.0 * power_factor)
                 self.roll = 0.20   # Bank right
                 
-            # Collective Lift (Vertical Thrust)
+            # --- 3. COLLECTIVE LIFT (VERTICAL THRUST) ---
             fz = 0.0
             if inp.get('up'):
-                fz -= 13.0 # Ascend into sky
+                # Ascend power
+                fz -= 14.0 * power_factor
             elif inp.get('down'):
-                fz += 10.0 # Descend toward ground
+                # Descend
+                fz += 10.0
             else:
-                # Hover hold with subtle atmospheric oscillation
+                # Hover hold
                 fz = -self.vz * 2.2 + 0.15 * math.sin(self.time_elapsed * 3.0)
+                
+            # --- TIER 2 & TIER 1 STABILITY EFFECTS (TURBULENCE, SHUDDER, LOSS OF LIFT) ---
+            if self.tier == 2:
+                # Tier 2: Aerodynamic turbulence & vibration
+                wobble_x = math.sin(self.time_elapsed * 7.5) * 1.6
+                wobble_y = math.cos(self.time_elapsed * 6.8) * 1.6
+                wobble_z = math.sin(self.time_elapsed * 5.2) * 1.1
+                fx += wobble_x
+                fy += wobble_y
+                fz += wobble_z
+                self.roll += math.sin(self.time_elapsed * 8.0) * 0.07
+                self.pitch += math.cos(self.time_elapsed * 7.0) * 0.05
+            elif self.tier == 1:
+                # Tier 1: Catastrophic bucking & heavy downward gravity drag
+                wobble_x = math.sin(self.time_elapsed * 12.0) * 4.2
+                wobble_y = math.cos(self.time_elapsed * 11.0) * 4.2
+                fx += wobble_x
+                fy += wobble_y
+                fz += 6.5 # Downward gravity drag - pilot must fight to stay in the air!
+                self.pitch += math.sin(self.time_elapsed * 14.0) * 0.16
+                self.roll += math.cos(self.time_elapsed * 13.0) * 0.18
                 
             # Inertia, drag & acceleration integration
             self.vx = (self.vx + fx * self.tick_dt) * 0.94
@@ -130,7 +235,7 @@ class ActiveHelicopter:
             self.y = max(10.0, min(502.0, self.y))
             self.z = max(4.0, min(58.0, self.z))
             
-            # Keep pilot inside the cockpit
+            # Keep pilot inside the cockpit seat (vulnerable to ground fire)
             try:
                 self.pilot.world_object.set_position(self.x, self.y, self.z)
                 self.pilot.set_location((self.x, self.y, self.z))
@@ -152,7 +257,7 @@ class ActiveHelicopter:
         """Sends [HELI_SYNC] metadata to all connected clients."""
         pilot_id = self.pilot.player_id if (self.pilot and not self.pilot.disconnected) else -1
         is_fly = 1 if (self.is_flying or self.pilot) else 0
-        sync_msg = f"[HELI_SYNC] 1 {self.x:.2f} {self.y:.2f} {self.z:.2f} {self.yaw:.2f} {self.pitch:.2f} {self.roll:.2f} {pilot_id} {is_fly}"
+        sync_msg = f"[HELI_SYNC] 1 {self.x:.2f} {self.y:.2f} {self.z:.2f} {self.yaw:.2f} {self.pitch:.2f} {self.roll:.2f} {pilot_id} {is_fly} {int(self.hp)} {int(self.max_hp)} {self.tier}"
         
         # Broadcast via silent system message
         for player in self.protocol.players.values():
@@ -164,6 +269,10 @@ class ActiveHelicopter:
 
     def embark(self, player):
         """Places player into the pilot cockpit."""
+        if self.hp <= 0.0 or not self.active:
+            player.send_chat("[HELICOPTER] El vehículo está destruido. Despliega uno nuevo con /spawn helicopter 1.")
+            return False
+            
         if self.pilot and not self.pilot.disconnected and self.pilot != player:
             player.send_chat("[HELICOPTER] La cabina ya está ocupada por otro piloto.")
             return False
@@ -172,7 +281,8 @@ class ActiveHelicopter:
         self.is_flying = True
         player.heli_inputs = {'forward': False, 'back': False, 'left': False, 'right': False, 'up': False, 'down': False}
         player.is_piloting = True
-        player.god = True # Immune to damage while piloting
+        # PILOT IS VULNERABLE TO GROUND SNIPERS/FIRE (god mode disabled)
+        player.god = False
         
         try:
             player.world_object.set_position(self.x, self.y, self.z)
@@ -181,8 +291,9 @@ class ActiveHelicopter:
             pass
             
         player.send_chat("[HELICOPTER] ¡Has tomado los controles del helicóptero militar!")
+        player.send_chat(f"[HELICOPTER] Estado del fuselaje: {int(self.hp)}/{int(self.max_hp)} HP [Nivel {self.tier}]")
         player.send_chat("[HELICOPTER] [W/S] Adelante/Atrás | [A/D] Viraje | [Espacio] Ascender | [C] Descender | [E] Salir")
-        self.protocol.broadcast_chat(f"[HELICOPTER] {player.name} ha tomado los controles del helicóptero militar.")
+        self.protocol.broadcast_chat(f"[HELICOPTER] {player.name} ha tomado los mandos del helicóptero militar.")
         self.broadcast_sync()
         return True
 
@@ -202,7 +313,7 @@ class ActiveHelicopter:
             except Exception:
                 pass
                 
-            player.send_chat("[HELICOPTER] Has desembarcado del helicóptero con éxito.")
+            player.send_chat("[HELICOPTER] Has desembarcado del helicóptero.")
             self.protocol.broadcast_chat(f"[HELICOPTER] {player.name} ha desembarcado del helicóptero.")
             self.broadcast_sync()
             return True
@@ -240,8 +351,8 @@ def spawn_command(connection, *args):
         yaw = connection.world_object.orientation.get()[0] if hasattr(connection.world_object, 'orientation') else 0.0
         GLOBAL_HELI.spawn_at(px, py, ground_z, yaw=yaw)
         
-        connection.send_chat(f"[HELICOPTER] Helicóptero militar desplegado en ({px:.1f}, {py:.1f}, {ground_z:.1f}).")
-        connection.send_chat("[HELICOPTER] ¡Acércate y presiona 'E' (o escribe /heli) para entrar!")
+        connection.send_chat(f"[HELICOPTER] Helicóptero militar desplegado en ({px:.1f}, {py:.1f}, {ground_z:.1f}) con 300 HP.")
+        connection.send_chat("[HELICOPTER] ¡Acércate y presiona 'E' para pilotarlo!")
         connection.protocol.broadcast_chat(f"[HELICOPTER] {connection.name} desplegó un helicóptero militar. ¡Presiona 'E' para pilotarlo!")
         return
     return f"Entidad '{args[0]}' desconocida. Opciones: helicopter"
@@ -312,6 +423,62 @@ def apply_script(protocol, connection, config):
                 return False
             return super().on_fall(damage)
 
+        def on_hit(self, hit_amount, hit_player, kill_type, grenade):
+            """Triggered when this player hits someone."""
+            global GLOBAL_HELI
+            # If target player is currently piloting the helicopter
+            if getattr(hit_player, 'is_piloting', False) and GLOBAL_HELI and GLOBAL_HELI.active:
+                # Gunfire also damages the helicopter structure
+                heli_dmg = hit_amount * 0.75
+                GLOBAL_HELI.take_damage(heli_dmg, attacker=self)
+            return super().on_hit(hit_amount, hit_player, kill_type, grenade)
+
+        def on_kill(self, killer, kill_type, grenade):
+            """Triggered when this player is killed."""
+            global GLOBAL_HELI
+            if getattr(self, 'is_piloting', False) and GLOBAL_HELI:
+                GLOBAL_HELI.disembark(self)
+                if killer and not killer.disconnected:
+                    self.protocol.broadcast_chat(f"[HELICOPTER] ¡{killer.name} derribó al piloto {self.name} de un certero disparo desde tierra!")
+            return super().on_kill(killer, kill_type, grenade)
+
+        def on_shoot_set(self, fire):
+            """Detects gunfire aimed from the ground towards the helicopter."""
+            global GLOBAL_HELI
+            if fire and GLOBAL_HELI and GLOBAL_HELI.active and GLOBAL_HELI.hp > 0.0:
+                if not getattr(self, 'is_piloting', False):
+                    try:
+                        sx, sy, sz = self.world_object.position.get()
+                        ori = self.world_object.orientation
+                        ox, oy, oz = ori.x, ori.y, ori.z
+                        
+                        # Ray-to-helicopter distance
+                        vx = GLOBAL_HELI.x - sx
+                        vy = GLOBAL_HELI.y - sy
+                        vz = (GLOBAL_HELI.z - 0.5) - sz
+                        
+                        t = vx * ox + vy * oy + vz * oz
+                        if 0.5 < t < 120.0:
+                            cx = sx + t * ox
+                            cy = sy + t * oy
+                            cz = sz + t * oz
+                            dist_sq = (GLOBAL_HELI.x - cx)**2 + (GLOBAL_HELI.y - cy)**2 + (GLOBAL_HELI.z - cz)**2
+                            
+                            # Helicopter bounding volume radius (3.2 blocks)
+                            if dist_sq <= 3.2**2:
+                                # Determine weapon damage
+                                weap = getattr(self, 'weapon', 0)
+                                dmg = 45.0 if weap == 0 else (22.0 if weap == 1 else 35.0)
+                                GLOBAL_HELI.take_damage(dmg, attacker=self)
+                                
+                                # If pilot inside and hit is near cockpit, damage pilot directly
+                                if GLOBAL_HELI.pilot and not GLOBAL_HELI.pilot.disconnected:
+                                    if dist_sq <= 1.4**2:
+                                        GLOBAL_HELI.pilot.hit(dmg * 0.7, self, 0)
+                    except Exception:
+                        pass
+            return super().on_shoot_set(fire)
+
         def on_chat(self, value, global_message):
             msg = value.strip().lower()
             
@@ -330,13 +497,14 @@ def apply_script(protocol, connection, config):
                 if not GLOBAL_HELI:
                     GLOBAL_HELI = ActiveHelicopter(self.protocol)
                 GLOBAL_HELI.spawn_at(px, py, ground_z)
-                self.send_chat(f"[HELICOPTER] Helicóptero militar #1 desplegado en tu posición.")
+                self.send_chat(f"[HELICOPTER] Helicóptero militar desplegado en tu posición con 300 HP.")
                 self.send_chat("[HELICOPTER] ¡Acércate y presiona 'E' para entrar y pilotarlo!")
                 self.protocol.broadcast_chat(f"[HELICOPTER] {self.name} desplegó un helicóptero militar. ¡Presiona 'E' para pilotarlo!")
                 return False
                 
             # Enter / Exit triggers
             if msg in ('/heli', 'heli', '7heli', '/pilot', 'pilot', '!heli', '/exit', 'exit'):
+                global GLOBAL_HELI
                 if not GLOBAL_HELI:
                     GLOBAL_HELI = ActiveHelicopter(self.protocol)
                 if getattr(self, 'is_piloting', False):
@@ -344,7 +512,7 @@ def apply_script(protocol, connection, config):
                 else:
                     px, py, pz = self.world_object.position.get()
                     dist = math.sqrt((px - GLOBAL_HELI.x)**2 + (py - GLOBAL_HELI.y)**2 + (pz - GLOBAL_HELI.z)**2)
-                    if dist <= 8.0:
+                    if dist <= 18.0:
                         GLOBAL_HELI.embark(self)
                     else:
                         self.send_chat(f"[HELICOPTER] El helicóptero está a {dist:.1f} bloques. Acércate para subirte.")
