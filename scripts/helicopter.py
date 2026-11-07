@@ -162,7 +162,7 @@ class ActiveHelicopter:
             right_x = dir_y
             right_y = -dir_x
             
-            # --- 2. CYCLIC THRUST & BANKING ---
+            # --- 2. CYCLIC THRUST & BANKING (Realistic, heavy military gunship cruising physics) ---
             fx = 0.0
             fy = 0.0
             self.pitch = 0.0
@@ -172,33 +172,34 @@ class ActiveHelicopter:
             power_factor = 1.0 if self.tier == 3 else (0.75 if self.tier == 2 else 0.50)
             
             if inp.get('forward'):
-                fx += dir_x * (15.0 * power_factor)
-                fy += dir_y * (15.0 * power_factor)
-                self.pitch = -0.24 # Nose down
+                # Realistic cruising thrust (controlled, tactical speed ~4.5 blocks/sec)
+                fx += dir_x * (5.5 * power_factor)
+                fy += dir_y * (5.5 * power_factor)
+                self.pitch = -0.12 # Natural nose-down forward cruise
             if inp.get('back'):
-                fx -= dir_x * (11.0 * power_factor)
-                fy -= dir_y * (11.0 * power_factor)
-                self.pitch = 0.20  # Nose up
+                fx -= dir_x * (3.5 * power_factor)
+                fy -= dir_y * (3.5 * power_factor)
+                self.pitch = 0.08  # Gentle nose up / braking
             if inp.get('left'):
-                fx -= right_x * (11.0 * power_factor)
-                fy -= right_y * (11.0 * power_factor)
-                self.roll = -0.20  # Bank left
+                fx -= right_x * (3.5 * power_factor)
+                fy -= right_y * (3.5 * power_factor)
+                self.roll = -0.10  # Gentle bank left
             if inp.get('right'):
-                fx += right_x * (11.0 * power_factor)
-                fy += right_y * (11.0 * power_factor)
-                self.roll = 0.20   # Bank right
+                fx += right_x * (3.5 * power_factor)
+                fy += right_y * (3.5 * power_factor)
+                self.roll = 0.10   # Gentle bank right
                 
             # --- 3. COLLECTIVE LIFT (VERTICAL THRUST) ---
             fz = 0.0
             if inp.get('up'):
-                # Ascend power
-                fz -= 14.0 * power_factor
+                # Steady, majestic collective climb
+                fz -= 12.0 * power_factor
             elif inp.get('down'):
-                # Descend
-                fz += 10.0
+                # Controlled smooth descent
+                fz += 8.0
             else:
-                # Hover hold
-                fz = -self.vz * 2.2 + 0.15 * math.sin(self.time_elapsed * 3.0)
+                # Hover hold with smooth dampening
+                fz = -self.vz * 2.5 + 0.10 * math.sin(self.time_elapsed * 3.0)
                 
             # --- TIER 2 & TIER 1 STABILITY EFFECTS (TURBULENCE, SHUDDER, LOSS OF LIFT) ---
             if self.tier == 2:
@@ -221,10 +222,10 @@ class ActiveHelicopter:
                 self.pitch += math.sin(self.time_elapsed * 14.0) * 0.16
                 self.roll += math.cos(self.time_elapsed * 13.0) * 0.18
                 
-            # Integrate velocities
-            self.vx = (self.vx + fx * self.tick_dt) * 0.94
-            self.vy = (self.vy + fy * self.tick_dt) * 0.94
-            self.vz = (self.vz + fz * self.tick_dt) * 0.90
+            # Integrate velocities with aerodynamic drag (realistic momentum & progressive dampening)
+            self.vx = (self.vx + fx * self.tick_dt) * 0.88
+            self.vy = (self.vy + fy * self.tick_dt) * 0.88
+            self.vz = (self.vz + fz * self.tick_dt) * 0.86
             
             self.x += self.vx * self.tick_dt
             self.y += self.vy * self.tick_dt
