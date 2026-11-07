@@ -391,6 +391,34 @@ def exit_command(connection):
     else:
         connection.send_chat("No estás dentro de ningún vehículo.")
 
+@command('damageheli', 'dmgheli')
+def damageheli_command(connection, amount="50"):
+    """Inflict damage on the military helicopter."""
+    global GLOBAL_HELI
+    if GLOBAL_HELI and GLOBAL_HELI.active:
+        try:
+            dmg = float(amount)
+        except ValueError:
+            dmg = 50.0
+        GLOBAL_HELI.take_damage(dmg, attacker=connection)
+        return f"Helicóptero dañado por {dmg:.0f} HP."
+    return "No hay helicóptero activo."
+
+@command('sethelihp')
+def sethelihp_command(connection, amount="300"):
+    """Set the helicopter HP directly to test stability tiers."""
+    global GLOBAL_HELI
+    if GLOBAL_HELI and GLOBAL_HELI.active:
+        try:
+            val = float(amount)
+        except ValueError:
+            val = 300.0
+        GLOBAL_HELI.hp = max(0.0, min(GLOBAL_HELI.max_hp, val))
+        GLOBAL_HELI.update_tier()
+        GLOBAL_HELI.broadcast_sync()
+        return f"Salud del helicóptero fijada a {GLOBAL_HELI.hp:.0f} HP [Nivel {GLOBAL_HELI.tier}]."
+    return "No hay helicóptero activo."
+
 def apply_script(protocol, connection, config):
     class HelicopterProtocol(protocol):
         def on_map_change(self, map):
@@ -500,6 +528,33 @@ def apply_script(protocol, connection, config):
                 self.send_chat(f"[HELICOPTER] Helicóptero militar desplegado en tu posición con 300 HP.")
                 self.send_chat("[HELICOPTER] ¡Acércate y presiona 'E' para entrar y pilotarlo!")
                 self.protocol.broadcast_chat(f"[HELICOPTER] {self.name} desplegó un helicóptero militar. ¡Presiona 'E' para pilotarlo!")
+                return False
+
+            if msg.startswith(('damageheli', '/damageheli', 'dmgheli', '/dmgheli')):
+                parts = msg.split()
+                dmg = 50.0
+                if len(parts) > 1:
+                    try:
+                        dmg = float(parts[1])
+                    except ValueError:
+                        pass
+                if GLOBAL_HELI and GLOBAL_HELI.active:
+                    GLOBAL_HELI.take_damage(dmg, attacker=self)
+                return False
+
+            if msg.startswith(('sethelihp', '/sethelihp')):
+                parts = msg.split()
+                val = 300.0
+                if len(parts) > 1:
+                    try:
+                        val = float(parts[1])
+                    except ValueError:
+                        pass
+                if GLOBAL_HELI and GLOBAL_HELI.active:
+                    GLOBAL_HELI.hp = max(0.0, min(GLOBAL_HELI.max_hp, val))
+                    GLOBAL_HELI.update_tier()
+                    GLOBAL_HELI.broadcast_sync()
+                    self.send_chat(f"[HELICOPTER] Salud ajustada a {int(GLOBAL_HELI.hp)}/300 [Nivel {GLOBAL_HELI.tier}]")
                 return False
                 
             # Enter / Exit triggers
