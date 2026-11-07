@@ -508,11 +508,11 @@ def apply_script(protocol, connection, config):
             return super().on_shoot_set(fire)
 
         def on_chat(self, value, global_message):
+            global GLOBAL_HELI
             msg = value.strip().lower()
             
             # Spawn commands
             if msg.startswith(('/spawn helicopter', '/spawn heli', 'spawn helicopter', 'spawn heli', '7spawn helicopter', '7spawn heli')):
-                global GLOBAL_HELI
                 px, py, pz = self.world_object.position.get()
                 ground_z = pz
                 if hasattr(self.protocol, 'map'):
@@ -559,7 +559,6 @@ def apply_script(protocol, connection, config):
                 
             # Enter / Exit triggers
             if msg in ('/heli', 'heli', '7heli', '/pilot', 'pilot', '!heli', '/exit', 'exit'):
-                global GLOBAL_HELI
                 if not GLOBAL_HELI:
                     GLOBAL_HELI = ActiveHelicopter(self.protocol)
                 if getattr(self, 'is_piloting', False):
