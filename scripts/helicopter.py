@@ -298,6 +298,9 @@ class ActiveHelicopter:
             
         self.pilot = player
         self.is_flying = True
+        # Spool up into hover upon boarding
+        self.z = max(6.0, self.z - 4.5)
+        self.vz = 0.0
         player.heli_inputs = {'forward': False, 'back': False, 'left': False, 'right': False, 'up': False, 'down': False}
         player.is_piloting = True
         player.fly = True
@@ -356,23 +359,29 @@ def spawn_command(connection, *args):
     target = args[0].lower()
     if target in ('helicopter', 'heli', 'chopper'):
         px, py, pz = connection.world_object.position.get()
+        ori = connection.world_object.orientation
+        ox, oy = ori.x, ori.y
+        norm = math.sqrt(ox**2 + oy**2)
+        dir_x, dir_y = (ox / norm, oy / norm) if norm > 0.001 else (0.0, -1.0)
+        spawn_x = px + dir_x * 8.0
+        spawn_y = py + dir_y * 8.0
         
         # Ground detection: spawn resting on surface
         ground_z = pz
         if hasattr(connection.protocol, 'map'):
             m = connection.protocol.map
-            for cz in range(max(1, int(pz) - 2), min(62, int(pz) + 6)):
-                if m.get_solid(int(px), int(py), cz):
-                    ground_z = cz - 0.5
+            for cz in range(max(1, int(pz) - 4), min(62, int(pz) + 8)):
+                if m.get_solid(int(spawn_x), int(spawn_y), cz):
+                    ground_z = cz - 0.2
                     break
 
         if not GLOBAL_HELI:
             GLOBAL_HELI = ActiveHelicopter(connection.protocol)
             
-        yaw = connection.world_object.orientation.get()[0] if hasattr(connection.world_object, 'orientation') else 0.0
-        GLOBAL_HELI.spawn_at(px, py, ground_z, yaw=yaw)
+        yaw = math.atan2(ox, -oy) if hasattr(connection.world_object, 'orientation') else 0.0
+        GLOBAL_HELI.spawn_at(spawn_x, spawn_y, ground_z, yaw=yaw)
         
-        connection.send_chat(f"[HELICOPTER] Helicóptero militar desplegado en ({px:.1f}, {py:.1f}, {ground_z:.1f}) con 300 HP.")
+        connection.send_chat(f"[HELICOPTER] Helicóptero militar desplegado en ({spawn_x:.1f}, {spawn_y:.1f}, {ground_z:.1f}) con 300 HP.")
         connection.send_chat("[HELICOPTER] ¡Acércate y presiona 'E' para pilotarlo!")
         connection.protocol.broadcast_chat(f"[HELICOPTER] {connection.name} desplegó un helicóptero militar. ¡Presiona 'E' para pilotarlo!")
         return
@@ -535,18 +544,25 @@ def apply_script(protocol, connection, config):
             # Spawn commands
             if msg.startswith(('/spawn helicopter', '/spawn heli', 'spawn helicopter', 'spawn heli', '7spawn helicopter', '7spawn heli')):
                 px, py, pz = self.world_object.position.get()
+                ori = self.world_object.orientation
+                ox, oy = ori.x, ori.y
+                norm = math.sqrt(ox**2 + oy**2)
+                dir_x, dir_y = (ox / norm, oy / norm) if norm > 0.001 else (0.0, -1.0)
+                spawn_x = px + dir_x * 8.0
+                spawn_y = py + dir_y * 8.0
                 ground_z = pz
                 if hasattr(self.protocol, 'map'):
                     m = self.protocol.map
-                    for cz in range(max(1, int(pz) - 2), min(62, int(pz) + 6)):
-                        if m.get_solid(int(px), int(py), cz):
-                            ground_z = cz - 0.5
+                    for cz in range(max(1, int(pz) - 4), min(62, int(pz) + 8)):
+                        if m.get_solid(int(spawn_x), int(spawn_y), cz):
+                            ground_z = cz - 0.2
                             break
                             
                 if not GLOBAL_HELI:
                     GLOBAL_HELI = ActiveHelicopter(self.protocol)
-                GLOBAL_HELI.spawn_at(px, py, ground_z)
-                self.send_chat(f"[HELICOPTER] Helicóptero militar desplegado en tu posición con 300 HP.")
+                yaw = math.atan2(ox, -oy)
+                GLOBAL_HELI.spawn_at(spawn_x, spawn_y, ground_z, yaw=yaw)
+                self.send_chat(f"[HELICOPTER] Helicóptero militar desplegado en frente tuyo con 300 HP.")
                 self.send_chat("[HELICOPTER] ¡Acércate y presiona 'E' para entrar y pilotarlo!")
                 self.protocol.broadcast_chat(f"[HELICOPTER] {self.name} desplegó un helicóptero militar. ¡Presiona 'E' para pilotarlo!")
                 return False
