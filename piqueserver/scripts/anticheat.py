@@ -22,7 +22,7 @@ import math
 import json
 import os
 import hashlib
-from piqueserver.commands import command, admin_only, player_only, get_player
+from piqueserver.commands import command, player_only, get_player
 from pyspades.constants import RIFLE_WEAPON, SMG_WEAPON, SHOTGUN_WEAPON
 
 HWID_DB_PATH = "local_server/hwid_bans.json"
