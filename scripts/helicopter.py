@@ -265,7 +265,7 @@ def heli_command(connection):
         if not GLOBAL_HELI.pilot:
             px, py, pz = connection.world_object.position.get()
             dist = math.sqrt((px - GLOBAL_HELI.x)**2 + (py - GLOBAL_HELI.y)**2 + (pz - GLOBAL_HELI.z)**2)
-            if dist > 8.0:
+            if dist > 18.0:
                 connection.send_chat(f"[HELICOPTER] Estás demasiado lejos del helicóptero ({dist:.1f} bloques). Acércate para subirte.")
                 return
         GLOBAL_HELI.embark(connection)
