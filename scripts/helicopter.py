@@ -221,7 +221,7 @@ class ActiveHelicopter:
                 self.pitch += math.sin(self.time_elapsed * 14.0) * 0.16
                 self.roll += math.cos(self.time_elapsed * 13.0) * 0.18
                 
-            # Inertia, drag & acceleration integration
+            # Integrate velocities
             self.vx = (self.vx + fx * self.tick_dt) * 0.94
             self.vy = (self.vy + fy * self.tick_dt) * 0.94
             self.vz = (self.vz + fz * self.tick_dt) * 0.90
@@ -229,21 +229,34 @@ class ActiveHelicopter:
             self.x += self.vx * self.tick_dt
             self.y += self.vy * self.tick_dt
             self.z += self.vz * self.tick_dt
+
+            # Ground collision: landing skids rest on ground surface
+            if hasattr(self.protocol, 'map'):
+                m = self.protocol.map
+                px_i = int(max(0, min(511, self.x)))
+                py_i = int(max(0, min(511, self.y)))
+                ground_z = 63.0
+                for cz in range(0, 63):
+                    if m.get_solid(px_i, py_i, cz):
+                        ground_z = float(cz)
+                        break
+                if self.z >= ground_z - 0.2:
+                    self.z = ground_z - 0.2
+                    if self.vz > 0.0:
+                        self.vz = 0.0
+                    self.pitch *= 0.8
+                    self.roll *= 0.8
             
             # Map boundaries & flight limits
             self.x = max(10.0, min(502.0, self.x))
             self.y = max(10.0, min(502.0, self.y))
             self.z = max(4.0, min(58.0, self.z))
             
-            # Synchronize helicopter position and heading from the active pilot
+            # Keep pilot inside the cockpit seat and airborne
             try:
-                ppos = self.pilot.world_object.position.get()
-                self.x = float(ppos[0])
-                self.y = float(ppos[1])
-                self.z = float(ppos[2])
-                ori = self.pilot.world_object.orientation
-                self.yaw = math.atan2(ori.x, -ori.y)
-                self.is_flying = True
+                self.pilot.fly = True
+                self.pilot.world_object.set_position(self.x, self.y, self.z)
+                self.pilot.set_location((self.x, self.y, self.z))
             except Exception:
                 pass
                 
@@ -286,6 +299,7 @@ class ActiveHelicopter:
         self.is_flying = True
         player.heli_inputs = {'forward': False, 'back': False, 'left': False, 'right': False, 'up': False, 'down': False}
         player.is_piloting = True
+        player.fly = True
         # PILOT IS VULNERABLE TO GROUND SNIPERS/FIRE (god mode disabled)
         player.god = False
         
@@ -309,6 +323,7 @@ class ActiveHelicopter:
             self.is_flying = False
             player.is_piloting = False
             player.god = False
+            player.fly = False
             player.heli_inputs = {}
             
             try:
