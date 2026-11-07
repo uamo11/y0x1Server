@@ -179,7 +179,7 @@ class ActiveHelicopter:
 # Global instance reference
 GLOBAL_HELI = None
 
-@command('heli', 'pilot')
+@command('heli', 'pilot', '7heli', 'h')
 @player_only
 def heli_command(connection):
     """
@@ -240,6 +240,18 @@ def apply_script(protocol, connection, config):
             if getattr(self, 'is_piloting', False):
                 return False # Immune to fall damage inside aircraft
             return super().on_fall(damage)
+
+        def on_chat(self, value, global_message):
+            msg = value.strip().lower()
+            if msg in ('/heli', 'heli', '7heli', '/pilot', 'pilot', '!heli'):
+                global GLOBAL_HELI
+                if GLOBAL_HELI:
+                    if getattr(self, 'is_piloting', False):
+                        GLOBAL_HELI.disembark(self)
+                    else:
+                        GLOBAL_HELI.embark(self)
+                return False
+            return super().on_chat(value, global_message)
 
         def on_disconnect(self):
             global GLOBAL_HELI
