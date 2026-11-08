@@ -1,6 +1,6 @@
 [build-system]
 requires = [
-    "setuptools >= 69,< 81",
+    "setuptools >= 69,< 85",
     "setuptools-scm >= 8,< 10",
     "Cython ~= 3.0",
     "wheel ~= 0.43",
