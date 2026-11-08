@@ -1,19 +1,16 @@
 """
-Classic Vintage Street Car (1930s Gangster / Street Cruiser Coupe)
-System for yServer / piqueserver.
+Multi-Vehicle Ground System (5 Distinct Vehicles):
+1. Chevrolet Chevelle SS Coupe 1970s (Classic Street Muscle Car V8)
+2. Toyota Land Cruiser Serie 79 Pick-Up 4x4 "Macho" (Off-Road Snorkel & Mud Tires)
+3. ISV Buggy Militar Táctico 4x4 (Open Tubular Roll Cage Squad Assault Buggy)
+4. GMC Sierra Denali Crew Cab 4x4 (Luxury American Heavy Duty Truck)
+5. Fiat Uno Turbo i.e. (Classic Red Italian Hot Hatch Pocket Rocket)
 
 Features:
-- High-fidelity ground vehicle driving physics (engine torque, Ackermann steering, braking, reverse).
-- Terrain height sampling at all 4 wheels for pitch and roll slope alignment.
-- Dynamic Ackermann front wheel steering angle and tire rolling sync.
-- 2-passenger interior seating: Driver (steering wheel) + Copiloto / Passenger (shoots from window).
-- Classic vintage horn ("Beep-Beep" / Ah-ooga) on Left Click or /honk.
-- 3 Stability/Health Tiers (350 HP max):
-  * Tier 3 (350-250 HP): Óptimo.
-  * Tier 2 (249-100 HP): Dañado (humo del radiador frontal).
-  * Tier 1 (99-1 HP): Crítico (fuego en el motor, velocidad reducida).
-  * Tier 0 (0 HP): Explosión catastrófica (cráter 3x3x3, daño en área como 1 granada).
-- Seamless network synchronization via [CAR_SYNC] at 20 Hz.
+- Vehicle-specific ground physics (torque, max speed, climb clearance, roll damping).
+- Dynamic 3D seating offsets for driver and passenger per vehicle cabin.
+- 3 Damage/Health Tiers with visual engine smoke, sputtering, and non-lethal explosion.
+- 20 Hz network synchronization via [CAR_SYNC].
 """
 
 import sys
@@ -31,10 +28,93 @@ if _scripts_dir not in sys.path:
 if __name__ in sys.modules:
     sys.modules['car'] = sys.modules[__name__]
 
+VEHICLE_CONFIGS = {
+    1: {
+        'name': "Chevrolet Chevelle SS Coupe 1970s",
+        'tag': "CHEVROLET CHEVELLE",
+        'hp': 350.0,
+        'max_speed': 24.0,
+        'accel': 28.0,
+        'reverse_speed': 10.0,
+        'turn_rate_factor': 4.2,
+        'step_tolerance': 1.6,
+        'desc': "Muscle car de calle clásico con motor V8 rugiente y franja deportiva roja."
+    },
+    2: {
+        'name': "Toyota Land Cruiser 79 Pick-Up 4x4 (Macho)",
+        'tag': "TOYOTA LAND CRUISER 79",
+        'hp': 450.0,
+        'max_speed': 22.0,
+        'accel': 26.0,
+        'reverse_speed': 9.0,
+        'turn_rate_factor': 4.4,
+        'step_tolerance': 1.85, # Trepadora todoterreno superior
+        'desc': "Pick-up 4x4 todoterreno blanca con franjas retro, snorkel y cauchos Mud-Terrain."
+    },
+    3: {
+        'name': "ISV Buggy Militar Táctico 4x4",
+        'tag': "ISV MILITAR TÁCTICO",
+        'hp': 400.0,
+        'max_speed': 25.5,
+        'accel': 32.0,
+        'reverse_speed': 11.0,
+        'turn_rate_factor': 3.9,
+        'step_tolerance': 1.75,
+        'desc': "Vehículo de asalto con jaula antivuelco abierta (combate y tiro en 360°)."
+    },
+    4: {
+        'name': "GMC Sierra Denali Crew Cab 4x4",
+        'tag': "GMC SIERRA DENALI",
+        'hp': 500.0,
+        'max_speed': 23.0,
+        'accel': 24.0,
+        'reverse_speed': 9.5,
+        'turn_rate_factor': 4.8,
+        'step_tolerance': 1.6,
+        'desc': "Pickup moderna plateada de lujo con parrilla cromada GMC masiva y blindaje pesado."
+    },
+    5: {
+        'name': "Fiat Uno Turbo i.e.",
+        'tag': "FIAT UNO TURBO I.E.",
+        'hp': 280.0,
+        'max_speed': 27.5, # El más veloz en recta!
+        'accel': 35.0, # Turbo boost rápido!
+        'reverse_speed': 10.5,
+        'turn_rate_factor': 3.5, # Giro más cerrado y ágil
+        'step_tolerance': 1.4,
+        'desc': "Hatchback deportivo compacto italiano rojo, ultra ágil y con turbo boost."
+    }
+}
+
+def parse_vehicle_type(arg):
+    if not arg:
+        return 1
+    a = str(arg).lower().strip()
+    if a in ('1', 'chevelle', 'malibu', 'muscle', 'clasico', 'classic', 'coupe'):
+        return 1
+    elif a in ('2', 'toyota', 'lc79', 'macho', 'machito', 'landcruiser', 'roraima', 'pickup4x4'):
+        return 2
+    elif a in ('3', 'isv', 'militar', 'buggy', 'tactico', 'tactical', 'army', 'escuadron'):
+        return 3
+    elif a in ('4', 'gmc', 'sierra', 'denali', 'pickup', 'truck', 'camioneta'):
+        return 4
+    elif a in ('5', 'fiat', 'uno', 'turbo', 'hatchback', 'fiatuno'):
+        return 5
+    try:
+        val = int(a)
+        if 1 <= val <= 5:
+            return val
+    except ValueError:
+        pass
+    return 1
+
 class ActiveCar:
-    def __init__(self, protocol, car_id=1):
+    def __init__(self, protocol, car_id=1, car_type=1):
         self.protocol = protocol
         self.id = car_id
+        self.car_type = car_type
+        self.apply_config(car_type)
+
         self.x = 256.0
         self.y = 256.0
         self.z = 32.0
@@ -51,16 +131,26 @@ class ActiveCar:
         self.driver = None
         self.passenger = None
         
-        self.hp = 350.0
-        self.max_hp = 350.0
         self.tier = 3 # 3: Optimo, 2: Humo, 1: Fuego, 0: Destruido
-        
         self.active = False
         self.loop = None
         self.sync_counter = 0
         self.time_elapsed = 0.0
         self.tick_dt = 0.05 # 20 Hz
         self.horn_cooldown = 0.0
+
+    def apply_config(self, car_type):
+        cfg = VEHICLE_CONFIGS.get(car_type, VEHICLE_CONFIGS[1])
+        self.car_type = car_type
+        self.name = cfg['name']
+        self.tag = cfg['tag']
+        self.max_hp = cfg['hp']
+        self.hp = cfg['hp']
+        self.max_speed = cfg['max_speed']
+        self.accel = cfg['accel']
+        self.reverse_speed = cfg['reverse_speed']
+        self.turn_rate_factor = cfg['turn_rate_factor']
+        self.step_tolerance = cfg['step_tolerance']
 
     def start_loop(self):
         if self.loop is None:
@@ -72,7 +162,12 @@ class ActiveCar:
             self.loop.stop()
         self.loop = None
 
-    def spawn_at(self, x, y, z, yaw=0.0):
+    def spawn_at(self, x, y, z, yaw=0.0, car_type=None):
+        if car_type is not None:
+            self.apply_config(car_type)
+        else:
+            self.hp = self.max_hp
+
         self.x = float(x)
         self.y = float(y)
         self.z = float(z)
@@ -84,7 +179,6 @@ class ActiveCar:
         self.vy = 0.0
         self.vz = 0.0
         self.forward_speed = 0.0
-        self.hp = 350.0
         self.tier = 3
         self.active = True
         self.driver = None
@@ -110,7 +204,7 @@ class ActiveCar:
                 2: "Motor Dañado (Echando Humo, Velocidad Reducida)",
                 1: "Crítico (Motor en Llamas, 50% Potencia)"
             }
-            self.protocol.broadcast_chat(f"[AUTO CLÁSICO] ¡Estado del vehículo cambiado a Nivel {self.tier}: {tier_names[self.tier]}! HP: {int(self.hp)}/{int(self.max_hp)}")
+            self.protocol.broadcast_chat(f"[{self.tag}] ¡Estado cambiado a Nivel {self.tier}: {tier_names[self.tier]}! HP: {int(self.hp)}/{int(self.max_hp)}")
 
     def take_damage(self, amount, attacker=None):
         if not self.active or self.hp <= 0.0:
@@ -120,40 +214,34 @@ class ActiveCar:
         self.update_tier()
         
         if self.hp <= 0.0:
-            self.trigger_crash_explosion(self.x, self.y, self.z)
-            return
-            
-        if attacker and not attacker.disconnected:
-            attacker.send_chat(f"[AUTO CLÁSICO] ¡Impacto en carrocería! Salud: {int(self.hp)}/{int(self.max_hp)} HP [Nivel {self.tier}]")
-            
-        if self.driver and not self.driver.disconnected and attacker != self.driver:
-            self.driver.send_chat(f"[AUTO CLÁSICO] ¡Carrocería impactada! (-{int(amount)} HP) | Salud: {int(self.hp)}/{int(self.max_hp)}")
-            
-        self.broadcast_sync()
+            self.trigger_crash_explosion()
 
-    def trigger_crash_explosion(self, impact_x, impact_y, impact_z):
-        """Destroys car with 1-grenade terrain explosion, area damage, and eliminates occupants."""
-        ix = int(max(0, min(511, impact_x)))
-        iy = int(max(0, min(511, impact_y)))
-        iz = int(max(0, min(63, impact_z)))
+    def trigger_crash_explosion(self):
+        """Catastrophic vehicle explosion when HP hits 0."""
+        impact_x = int(self.x)
+        impact_y = int(self.y)
+        impact_z = int(self.z)
         
-        # 1. 3x3x3 block crater in terrain
-        m = getattr(self.protocol, 'map', None)
-        if m:
-            for nx in range(ix - 1, ix + 2):
-                for ny in range(iy - 1, iy + 2):
-                    for nz in range(iz - 1, iz + 2):
-                        if 0 <= nx < 512 and 0 <= ny < 512 and 0 <= nz < 64:
-                            m.destroy_point(nx, ny, nz)
-            ba = BlockAction()
-            ba.x = ix
-            ba.y = iy
-            ba.z = iz
-            ba.value = GRENADE_DESTROY
-            ba.player_id = 31
-            self.protocol.broadcast_contained(ba, save=True)
-            
-        # 2. Visual and audio Grenade Explosion
+        # 1. Crater excavation
+        if hasattr(self.protocol, 'map'):
+            m = self.protocol.map
+            for dx in range(-1, 2):
+                for dy in range(-1, 2):
+                    for dz in range(-1, 2):
+                        bx = impact_x + dx
+                        by = impact_y + dy
+                        bz = impact_z + dz
+                        if 0 <= bx < 512 and 0 <= by < 512 and 0 <= bz < 63:
+                            if m.get_solid(bx, by, bz):
+                                m.destroy_point(bx, by, bz)
+                                block_action = BlockAction()
+                                block_action.x = bx
+                                block_action.y = by
+                                block_action.z = bz
+                                block_action.value = GRENADE_DESTROY
+                                self.protocol.broadcast_contained(block_action)
+
+        # 2. Visual explosion & sound
         gp = GrenadePacket()
         gp.value = 0.0
         gp.player_id = 31
@@ -174,15 +262,15 @@ class ActiveCar:
                     except Exception:
                         pass
                         
-        # 4. Disembark and inflict moderate damage to occupants (survive with damage)
-        occupant_damage = 30.0 # Quita un poquito de vida a los tripulantes (~30 HP)
+        # 4. Moderate damage to occupants (occupants survive to fight on foot)
+        occupant_damage = 30.0
         if self.driver and not self.driver.disconnected:
             p = self.driver
             self.driver = None
             p.is_driving_car = False
             p.fly = False
             try:
-                p.send_chat(f"[AUTO CLÁSICO] ¡¡BOOM!! El auto explotó por los daños. Sufriste {int(occupant_damage)} HP de daño pero lograste saltar a tiempo.")
+                p.send_chat(f"[{self.tag}] ¡¡BOOM!! El vehículo explotó. Sufriste {int(occupant_damage)} HP de daño pero lograste saltar.")
                 p.hit(occupant_damage, None, GRENADE_KILL)
             except Exception:
                 pass
@@ -193,12 +281,12 @@ class ActiveCar:
             cp.is_car_passenger = False
             cp.fly = False
             try:
-                cp.send_chat(f"[AUTO CLÁSICO] ¡¡BOOM!! El auto explotó por los daños. Sufriste {int(occupant_damage)} HP de daño pero lograste saltar a tiempo.")
+                cp.send_chat(f"[{self.tag}] ¡¡BOOM!! El vehículo explotó. Sufriste {int(occupant_damage)} HP de daño pero lograste saltar.")
                 cp.hit(occupant_damage, None, GRENADE_KILL)
             except Exception:
                 pass
                 
-        self.protocol.broadcast_chat("[AUTO CLÁSICO] ¡¡BOOM!! ¡El auto clásico fue destruido y EXPLOTÓ violentamente!")
+        self.protocol.broadcast_chat(f"[{self.tag}] ¡¡BOOM!! ¡El vehículo fue destruido y EXPLOTÓ!")
         self.destroy()
 
     def destroy(self):
@@ -209,7 +297,6 @@ class ActiveCar:
         self.stop_loop()
 
     def get_ground_elevation(self, px, py):
-        """Samples solid block elevation at map coordinate (px, py)."""
         ground_z = 63.0
         if hasattr(self.protocol, 'map'):
             m = self.protocol.map
@@ -222,188 +309,171 @@ class ActiveCar:
         return ground_z
 
     def get_seat_positions(self):
-        """
-        Calculates 3D coordinates for driver and passenger in 1970s Muscle Coupe:
-        - Driver: Left front bench seat behind steering wheel.
-        - Passenger: Right front bench seat (copiloto).
-        """
         dir_x = math.sin(self.yaw)
         dir_y = -math.cos(self.yaw)
         right_x = dir_y
         right_y = -dir_x
         
-        # Driver: offset -0.85 blocks right, -0.35 blocks forward, -1.60 blocks up (1.2x cabin bench)
+        seat_x = 0.85
+        seat_y = 0.35
+        seat_z = 1.60
+        if self.car_type == 2: # Toyota LC79
+            seat_x = 0.90; seat_y = 0.30; seat_z = 1.85
+        elif self.car_type == 3: # Military ISV
+            seat_x = 0.90; seat_y = 0.35; seat_z = 1.70
+        elif self.car_type == 4: # GMC Sierra Denali
+            seat_x = 0.98; seat_y = 0.40; seat_z = 1.80
+        elif self.car_type == 5: # Fiat Uno Turbo
+            seat_x = 0.72; seat_y = 0.25; seat_z = 1.45
+            
         driver_pos = (
-            self.x - right_x * 0.85 - dir_x * 0.35,
-            self.y - right_y * 0.85 - dir_y * 0.35,
-            self.z - 1.60
+            self.x - right_x * seat_x - dir_x * seat_y,
+            self.y - right_y * seat_x - dir_y * seat_y,
+            self.z - seat_z
         )
-        
-        # Passenger: offset +0.85 blocks right, -0.35 blocks forward, -1.60 blocks up (1.2x copiloto bench)
         pass_pos = (
-            self.x + right_x * 0.85 - dir_x * 0.35,
-            self.y + right_y * 0.85 - dir_y * 0.35,
-            self.z - 1.60
+            self.x + right_x * seat_x - dir_x * seat_y,
+            self.y + right_y * seat_x - dir_y * seat_y,
+            self.z - seat_z
         )
-        
         return driver_pos, pass_pos
 
     def honk(self):
-        """Sounds the vintage street car horn."""
         if self.horn_cooldown <= 0.0:
-            self.horn_cooldown = 1.2
-            driver_name = self.driver.name if self.driver else "Conductor"
-            self.protocol.broadcast_chat(f"[AUTO CLÁSICO] ¡¡BEEP-BEEP!! {driver_name} tocó la bocina clásica vintage.")
+            self.horn_cooldown = 0.8
+            self.protocol.broadcast_chat(f"[{self.tag}] *¡¡BEEP-BEEP!!*")
 
     def update_physics(self):
-        self.time_elapsed += self.tick_dt
-        self.sync_counter += 1
-        if self.horn_cooldown > 0.0:
-            self.horn_cooldown -= self.tick_dt
-            
-        if not self.active or self.hp <= 0.0:
+        if not self.active:
             return
-            
-        # Clean disconnected occupants
-        if self.driver and (self.driver.disconnected or not self.driver.hp):
-            self.driver = None
-        if self.passenger and (self.passenger.disconnected or not self.passenger.hp):
-            self.passenger = None
 
-        # Power factor: Tier 2 is "un pelín más lento" (75%), Tier 1 is 50%
-        power_factor = 1.0 if self.tier == 3 else (0.75 if self.tier == 2 else 0.50)
-        
+        self.time_elapsed += self.tick_dt
+        if self.horn_cooldown > 0.0:
+            self.horn_cooldown = max(0.0, self.horn_cooldown - self.tick_dt)
+
+        # 1. 4-Wheel Terrain Elevation Probing
         dir_x = math.sin(self.yaw)
         dir_y = -math.cos(self.yaw)
         right_x = dir_y
         right_y = -dir_x
-
-        # 1. Sample ground height at all 4 wheels (1.2x scaled wheelbase and track)
-        # Wheel offsets: front/rear +/- 2.6 blocks, left/right +/- 1.6 blocks
-        z_fl = self.get_ground_elevation(self.x + dir_x * 2.6 - right_x * 1.6, self.y + dir_y * 2.6 - right_y * 1.6)
-        z_fr = self.get_ground_elevation(self.x + dir_x * 2.6 + right_x * 1.6, self.y + dir_y * 2.6 + right_y * 1.6)
-        z_rl = self.get_ground_elevation(self.x - dir_x * 2.6 - right_x * 1.6, self.y - dir_y * 2.6 - right_y * 1.6)
-        z_rr = self.get_ground_elevation(self.x - dir_x * 2.6 + right_x * 1.6, self.y - dir_y * 2.6 + right_y * 1.6)
         
-        ground_z = (z_fl + z_fr + z_rl + z_rr) * 0.25
+        half_wb = 2.6
+        half_tw = 1.6
+        if self.car_type == 4: # GMC
+            half_wb = 3.0
+            half_tw = 1.8
+        elif self.car_type == 5: # Fiat
+            half_wb = 2.2
+            half_tw = 1.3
         
-        # Calculate pitch and roll based on slope of terrain under the wheels
+        fl_x, fl_y = self.x + dir_x * half_wb - right_x * half_tw, self.y + dir_y * half_wb - right_y * half_tw
+        fr_x, fr_y = self.x + dir_x * half_wb + right_x * half_tw, self.y + dir_y * half_wb + right_y * half_tw
+        rl_x, rl_y = self.x - dir_x * half_wb - right_x * half_tw, self.y - dir_y * half_wb - right_y * half_tw
+        rr_x, rr_y = self.x - dir_x * half_wb + right_x * half_tw, self.y - dir_y * half_wb + right_y * half_tw
+        
+        z_fl = self.get_ground_elevation(fl_x, fl_y)
+        z_fr = self.get_ground_elevation(fr_x, fr_y)
+        z_rl = self.get_ground_elevation(rl_x, rl_y)
+        z_rr = self.get_ground_elevation(rr_x, rr_y)
+        
         z_front = (z_fl + z_fr) * 0.5
-        z_rear = (z_rl + z_rr) * 0.5
-        z_left = (z_fl + z_rl) * 0.5
+        z_rear  = (z_rl + z_rr) * 0.5
+        z_left  = (z_fl + z_rl) * 0.5
         z_right = (z_fr + z_rr) * 0.5
         
-        target_pitch = math.atan2(z_front - z_rear, 4.4)
-        target_roll = math.atan2(z_right - z_left, 2.8)
+        target_ground_z = (z_front + z_rear) * 0.5 - 0.2
+        target_pitch = math.atan2(z_front - z_rear, half_wb * 2.0)
+        target_roll  = -math.atan2(z_right - z_left, half_tw * 2.0)
 
-        # 2. Driver inputs and motion
+        # 2. Driver input processing
         if self.driver and not self.driver.disconnected and self.driver.hp:
             inp = getattr(self.driver, 'car_inputs', {})
-            ori = self.driver.world_object.orientation
             
-            # Steering with A and D
-            steer_input = 0.0
+            # Steering
+            max_steer = 0.58 if self.car_type == 5 else 0.52
+            steer_speed = 2.8 if self.car_type == 5 else 2.2
             if inp.get('left_a'):
-                steer_input -= 1.0
-            if inp.get('right_d'):
-                steer_input += 1.0
-                
-            # Optional mouse steering: gentle steering if player looks away from car heading
-            target_yaw_mouse = math.atan2(ori.x, -ori.y)
-            yaw_diff = (target_yaw_mouse - self.yaw + math.pi) % (2.0 * math.pi) - math.pi
-            if abs(steer_input) < 0.1 and abs(yaw_diff) > 0.10:
-                steer_input = max(-1.0, min(1.0, yaw_diff * 1.5))
-                
-            target_steer = steer_input * 0.52 # Up to +/- 30 degrees Ackermann wheel turn
-            self.steer_angle += (target_steer - self.steer_angle) * (12.0 * self.tick_dt)
-            
-            # Throttle and Braking
-            max_forward_speed = 24.0 * power_factor # ~85 km/h top speed
-            max_reverse_speed = -8.0 * power_factor
-            
-            if inp.get('up_w') or inp.get('jump'):
-                # Throttle forward
-                if self.forward_speed < max_forward_speed:
-                    acc = 22.0 * power_factor
-                    self.forward_speed = min(max_forward_speed, self.forward_speed + acc * self.tick_dt)
-            elif inp.get('down_s') or inp.get('crouch'):
-                # Braking / Reverse
-                if self.forward_speed > 1.0:
-                    # Strong brakes
-                    decel = 32.0
-                    self.forward_speed = max(0.0, self.forward_speed - decel * self.tick_dt)
-                else:
-                    # Reverse gear
-                    acc_rev = 14.0 * power_factor
-                    self.forward_speed = max(max_reverse_speed, self.forward_speed - acc_rev * self.tick_dt)
+                self.steer_angle = max(-max_steer, self.steer_angle - steer_speed * self.tick_dt)
+            elif inp.get('right_d'):
+                self.steer_angle = min(max_steer, self.steer_angle + steer_speed * self.tick_dt)
             else:
-                # Rolling friction / engine compression deceleration
-                friction = 8.5
+                self.steer_angle *= max(0.0, 1.0 - 5.0 * self.tick_dt)
+                
+            # Power multiplier based on damage tier
+            power_mult = 1.0
+            if self.tier == 2:
+                power_mult = 0.75 # "un pelín más lento"
+            elif self.tier == 1:
+                power_mult = 0.50 # Crítico
+                
+            max_fwd = self.max_speed * power_mult
+            accel_val = self.accel * power_mult
+            
+            if inp.get('up_w'):
+                if self.forward_speed < 0.0:
+                    self.forward_speed += 32.0 * self.tick_dt # Strong braking
+                else:
+                    self.forward_speed = min(max_fwd, self.forward_speed + accel_val * self.tick_dt)
+            elif inp.get('down_s'):
+                if self.forward_speed > 0.0:
+                    self.forward_speed = max(0.0, self.forward_speed - 32.0 * self.tick_dt) # Strong braking
+                else:
+                    self.forward_speed = max(-self.reverse_speed, self.forward_speed - 14.0 * self.tick_dt) # Reverse
+            else:
+                friction = 6.0
                 if self.forward_speed > 0.0:
                     self.forward_speed = max(0.0, self.forward_speed - friction * self.tick_dt)
                 elif self.forward_speed < 0.0:
                     self.forward_speed = min(0.0, self.forward_speed + friction * self.tick_dt)
                     
-            # Honk on left click
             if inp.get('click'):
                 self.honk()
                 
-            # Ackermann yaw turning based on speed and steer angle
             if abs(self.forward_speed) > 0.1:
-                # Turn rate is proportional to speed and steer angle (Ackermann geometry)
-                turn_rate = (self.forward_speed / 4.2) * math.tan(self.steer_angle)
+                turn_rate = (self.forward_speed / self.turn_rate_factor) * math.tan(self.steer_angle)
                 self.yaw += turn_rate * self.tick_dt
                 
-            # Chassis centrifugal lean (vintage soft suspension body roll into corners)
             chassis_lean = -self.steer_angle * (self.forward_speed / 20.0) * 0.12
             target_roll += chassis_lean
 
         else:
-            # Unoccupied: friction to stop
             self.forward_speed *= max(0.0, 1.0 - 6.0 * self.tick_dt)
             self.steer_angle *= max(0.0, 1.0 - 5.0 * self.tick_dt)
 
-        # Smooth pitch & roll suspension damping
         self.pitch += (target_pitch - self.pitch) * (8.0 * self.tick_dt)
         self.roll += (target_roll - self.roll) * (8.0 * self.tick_dt)
 
-        # Compute velocities
+        # 3. Position integration
         self.vx = dir_x * self.forward_speed
         self.vy = dir_y * self.forward_speed
-
-        # 3. Obstacle collision and step climbing
-        next_x = self.x + self.vx * self.tick_dt
-        next_y = self.y + self.vy * self.tick_dt
         
-        # Check height in front of the car (1.2x scale probe)
-        probe_dist = 2.6 if self.forward_speed >= 0 else -2.6
-        probe_x = next_x + dir_x * probe_dist
-        probe_y = next_y + dir_y * probe_dist
-        front_obstacle_z = self.get_ground_elevation(probe_x, probe_y)
+        cand_x = self.x + self.vx * self.tick_dt
+        cand_y = self.y + self.vy * self.tick_dt
         
-        height_diff = self.z - front_obstacle_z # Positive if obstacle is higher (remember -Z is sky)
+        # Smooth step climbing & wall collision check
+        obstacle_z = self.get_ground_elevation(cand_x + dir_x * 1.5, cand_y + dir_y * 1.5)
+        height_diff = self.z - obstacle_z
         
-        if height_diff > 1.60 and abs(self.forward_speed) > 1.5:
-            # Wall obstacle collision (> 1.6 blocks high): halts forward momentum
+        if height_diff > self.step_tolerance:
+            # Wall impact: crash stop & damage
             impact_speed = abs(self.forward_speed)
-            self.forward_speed *= -0.25 # Clean bounce back
-            if impact_speed > 12.0:
-                self.take_damage(impact_speed * 1.2)
+            if impact_speed > 6.0:
+                self.take_damage(impact_speed * 1.5)
+            self.forward_speed = 0.0
+            self.vx = 0.0
+            self.vy = 0.0
         else:
-            # Clear or gentle slope/1-block steps: integrate position smoothly
-            self.x = max(10.0, min(502.0, next_x))
-            self.y = max(10.0, min(502.0, next_y))
+            self.x = max(2.0, min(509.0, cand_x))
+            self.y = max(2.0, min(509.0, cand_y))
             
-        # Ground following: wheels rest on surface (Z is ground_z - 0.20)
-        target_z = ground_z - 0.20
-        self.z += (target_z - self.z) * (14.0 * self.tick_dt)
-        self.vz = (target_z - self.z)
+        z_blend = 1.0 - math.exp(-12.0 * self.tick_dt)
+        self.z += (target_ground_z - self.z) * z_blend
+        self.vz = (target_ground_z - self.z)
 
-        # 4. Synchronize occupant positions
+        # 4. Sync passengers
         driver_pos, pass_pos = self.get_seat_positions()
         if self.driver and not self.driver.disconnected and self.driver.hp:
             try:
-                self.driver.fly = True
                 self.driver.world_object.set_position(*driver_pos)
                 self.driver.set_location(driver_pos)
             except Exception:
@@ -411,13 +481,11 @@ class ActiveCar:
                 
         if self.passenger and not self.passenger.disconnected and self.passenger.hp:
             try:
-                self.passenger.fly = True
                 self.passenger.world_object.set_position(*pass_pos)
                 self.passenger.set_location(pass_pos)
             except Exception:
                 pass
 
-        # Broadcast sync every tick (20 Hz = 50ms)
         self.broadcast_sync()
 
     def broadcast_sync(self):
@@ -425,7 +493,8 @@ class ActiveCar:
         driver_id = self.driver.player_id if (self.driver and not self.driver.disconnected and self.driver.hp) else -1
         pass_id = self.passenger.player_id if (self.passenger and not self.passenger.disconnected and self.passenger.hp) else -1
         
-        sync_msg = f"[CAR_SYNC] 1 {self.x:.2f} {self.y:.2f} {self.z:.2f} {self.yaw:.2f} {self.pitch:.2f} {self.roll:.2f} {self.steer_angle:.2f} {driver_id} {pass_id} {int(self.hp)} {int(self.max_hp)} {self.tier} {self.vx:.2f} {self.vy:.2f} {self.vz:.2f}"
+        # 17 tokens: id, x, y, z, yaw, pitch, roll, steer, driver, pass, hp, max_hp, tier, vx, vy, vz, model_type
+        sync_msg = f"[CAR_SYNC] {self.car_type} {self.x:.2f} {self.y:.2f} {self.z:.2f} {self.yaw:.2f} {self.pitch:.2f} {self.roll:.2f} {self.steer_angle:.2f} {driver_id} {pass_id} {int(self.hp)} {int(self.max_hp)} {self.tier} {self.vx:.2f} {self.vy:.2f} {self.vz:.2f} {self.car_type}"
         
         for player in self.protocol.players.values():
             if not player.disconnected:
@@ -435,13 +504,12 @@ class ActiveCar:
                     pass
 
     def embark(self, player):
-        """Boards a player as driver or passenger."""
         if self.hp <= 0.0 or not self.active:
-            player.send_chat("[AUTO CLÁSICO] El vehículo está destruido. Despliega uno nuevo con /spawn car 1.")
+            player.send_chat(f"[{self.tag}] El vehículo está destruido. Despliega uno nuevo con /spawn car [1-5].")
             return False
             
         if player == self.driver or player == self.passenger:
-            player.send_chat("[AUTO CLÁSICO] Ya estás a bordo del vehículo.")
+            player.send_chat(f"[{self.tag}] Ya estás a bordo del vehículo.")
             return False
             
         # Driver seat
@@ -460,10 +528,9 @@ class ActiveCar:
             except Exception:
                 pass
                 
-            player.send_chat("[AUTO CLÁSICO] ¡Has tomado el volante como CONDUCTOR del auto clásico vintage!")
-            player.send_chat(f"[AUTO CLÁSICO] Estado: {int(self.hp)}/{int(self.max_hp)} HP [Nivel {self.tier}]")
-            player.send_chat("[AUTO CLÁSICO] Controles: [W] Acelerar | [S] Frenar/Reversa | [A/D] Girar | [Clic Izq] Bocina | [E] Salir")
-            self.protocol.broadcast_chat(f"[AUTO CLÁSICO] {player.name} tomó el volante del auto clásico vintage.")
+            player.send_chat(f"[{self.tag}] ¡Tomaste el volante de: {self.name}!")
+            player.send_chat(f"[{self.tag}] Controles: [W] Acelerar, [S] Frenar/Reversa, [A/D] Girar, [Clic Izq] Bocina, [E] Salir")
+            self.protocol.broadcast_chat(f"[{self.tag}] {player.name} se subió como conductor de {self.name}.")
             self.broadcast_sync()
             return True
             
@@ -475,71 +542,90 @@ class ActiveCar:
             player.car_seat = 1
             player.fly = True
             
-            driver_name = self.driver.name if self.driver else "Ninguno"
-            player.send_chat("[AUTO CLÁSICO] ¡Has subido como COPILOTO en el asiento del pasajero!")
-            player.send_chat(f"[AUTO CLÁSICO] Conductor: {driver_name} | Dispara a los enemigos por la ventanilla.")
-            self.protocol.broadcast_chat(f"[AUTO CLÁSICO] {player.name} subió como copiloto en el auto clásico vintage.")
-            self.broadcast_sync()
-            return True
-        else:
-            player.send_chat("[AUTO CLÁSICO] El vehículo está lleno (2/2 Plazas ocupadas: Conductor + Copiloto).")
-            return False
-
-    def disembark(self, player):
-        """Safely disembarks an occupant."""
-        if player == self.passenger:
-            self.passenger = None
-            player.is_car_passenger = False
-            player.fly = False
-            player.car_seat = -1
-            player.send_chat("[AUTO CLÁSICO] Has bajado del auto clásico.")
-            self.protocol.broadcast_chat(f"[AUTO CLÁSICO] {player.name} bajó del asiento del copiloto.")
+            _, pass_pos = self.get_seat_positions()
+            try:
+                player.world_object.set_position(*pass_pos)
+                player.set_location(pass_pos)
+            except Exception:
+                pass
+                
+            player.send_chat(f"[{self.tag}] ¡Te subiste como copiloto/pasajero en {self.name}!")
+            player.send_chat(f"[{self.tag}] ¡Las ventanillas están abiertas! Puedes apuntar y disparar con tu arma.")
+            self.protocol.broadcast_chat(f"[{self.tag}] {player.name} se subió como acompañante en {self.name}.")
             self.broadcast_sync()
             return True
             
+        else:
+            player.send_chat(f"[{self.tag}] El vehículo está lleno (2/2 ocupantes).")
+            return False
+
+    def disembark(self, player):
         if player == self.driver:
             self.driver = None
             player.is_driving_car = False
             player.fly = False
-            player.car_inputs = {}
-            player.car_seat = -1
-            player.send_chat("[AUTO CLÁSICO] Has salido del asiento del conductor.")
+            player.send_chat(f"[{self.tag}] Te bajaste del vehículo.")
+            self.protocol.broadcast_chat(f"[{self.tag}] {player.name} dejó el volante de {self.name}.")
             
-            # Succession: promote passenger to driver
-            if self.passenger and not self.passenger.disconnected and self.passenger.hp:
-                new_driver = self.passenger
-                self.passenger = None
-                self.driver = new_driver
-                new_driver.is_driving_car = True
-                new_driver.is_car_passenger = False
-                new_driver.car_seat = 0
-                new_driver.car_inputs = {'up_w': False, 'down_s': False, 'left_a': False, 'right_d': False, 'click': False, 'jump': False, 'crouch': False}
-                new_driver.send_chat("[AUTO CLÁSICO] ¡Has tomado el volante como nuevo CONDUCTOR!")
-                self.protocol.broadcast_chat(f"[AUTO CLÁSICO] {new_driver.name} se pasó al asiento del conductor.")
+            # Place player to left of vehicle
+            dir_x = math.sin(self.yaw)
+            dir_y = -math.cos(self.yaw)
+            right_x = dir_y
+            right_y = -dir_x
+            exit_pos = (self.x - right_x * 2.2, self.y - right_y * 2.2, self.z - 0.5)
+            try:
+                player.world_object.set_position(*exit_pos)
+                player.set_location(exit_pos)
+            except Exception:
+                pass
+            self.broadcast_sync()
+            return True
+            
+        elif player == self.passenger:
+            self.passenger = None
+            player.is_car_passenger = False
+            player.fly = False
+            player.send_chat(f"[{self.tag}] Te bajaste del vehículo.")
+            self.protocol.broadcast_chat(f"[{self.tag}] {player.name} se bajó de {self.name}.")
+            
+            dir_x = math.sin(self.yaw)
+            dir_y = -math.cos(self.yaw)
+            right_x = dir_y
+            right_y = -dir_x
+            exit_pos = (self.x + right_x * 2.2, self.y + right_y * 2.2, self.z - 0.5)
+            try:
+                player.world_object.set_position(*exit_pos)
+                player.set_location(exit_pos)
+            except Exception:
+                pass
             self.broadcast_sync()
             return True
             
         return False
 
-# Global instance reference
 GLOBAL_CAR = None
 
 @command('car', 'auto', 'carro', 'coche', 'drive')
 @player_only
 def car_command(connection, *args):
     """
-    Board or disembark from the classic vintage street car.
-    Usage: /car or /auto
+    Board, disembark or select a vehicle:
+    /car 1 -> Chevelle Coupe
+    /car 2 -> Toyota LC79 4x4
+    /car 3 -> ISV Buggy Militar
+    /car 4 -> GMC Sierra Denali
+    /car 5 -> Fiat Uno Turbo
     """
     global GLOBAL_CAR
+    v_type = parse_vehicle_type(args[0]) if args else 1
+
     if not GLOBAL_CAR:
-        GLOBAL_CAR = ActiveCar(connection.protocol)
+        GLOBAL_CAR = ActiveCar(connection.protocol, car_type=v_type)
         
     if getattr(connection, 'is_driving_car', False) or getattr(connection, 'is_car_passenger', False):
         GLOBAL_CAR.disembark(connection)
         return
     else:
-        # Distance check & auto-spawn if inactive or requested
         px, py, pz = connection.world_object.position.get()
         ori = connection.world_object.orientation if hasattr(connection.world_object, 'orientation') else None
         ox = ori.x if ori else 0.0
@@ -547,7 +633,8 @@ def car_command(connection, *args):
         norm = math.sqrt(ox**2 + oy**2)
         dir_x, dir_y = (ox / norm, oy / norm) if norm > 0.001 else (0.0, -1.0)
         
-        if not GLOBAL_CAR.active or (args and args[0].lower() in ('spawn', 'here', 'aqui', '1')):
+        need_spawn = not GLOBAL_CAR.active or (args and (args[0].lower() in ('spawn', 'here', 'aqui') or any(str(i) in args[0] for i in range(1, 6))))
+        if need_spawn:
             spawn_x = px + dir_x * 5.0
             spawn_y = py + dir_y * 5.0
             ground_z = pz
@@ -558,23 +645,24 @@ def car_command(connection, *args):
                         ground_z = cz - 0.2
                         break
             yaw = math.atan2(ox, -oy) if hasattr(connection.world_object, 'orientation') else 0.0
-            GLOBAL_CAR.spawn_at(spawn_x, spawn_y, ground_z, yaw=yaw)
-            connection.send_chat(f"[AUTO CLÁSICO] Auto clásico vintage desplegado en ({spawn_x:.1f}, {spawn_y:.1f}, {ground_z:.1f})")
+            GLOBAL_CAR.spawn_at(spawn_x, spawn_y, ground_z, yaw=yaw, car_type=v_type)
+            connection.send_chat(f"[{GLOBAL_CAR.tag}] Desplegado en ({spawn_x:.1f}, {spawn_y:.1f}, {ground_z:.1f}) con {int(GLOBAL_CAR.hp)} HP.")
 
         if not GLOBAL_CAR.driver and not GLOBAL_CAR.passenger:
             dist = math.sqrt((px - GLOBAL_CAR.x)**2 + (py - GLOBAL_CAR.y)**2 + (pz - GLOBAL_CAR.z)**2)
             if dist > 20.0:
-                connection.send_chat(f"[AUTO CLÁSICO] Estás demasiado lejos del auto ({dist:.1f} bloques). Acércate para subirte.")
+                connection.send_chat(f"[{GLOBAL_CAR.tag}] Estás lejos del vehículo ({dist:.1f} bloques). Acércate para subirte.")
                 return
         GLOBAL_CAR.embark(connection)
 
 @command('spawncar')
 @player_only
 def spawncar_command(connection, *args):
-    """Spawn classic street car directly."""
+    """Spawn vehicle directly: /spawncar [1-5|toyota|isv|gmc|fiat]"""
     global GLOBAL_CAR
+    v_type = parse_vehicle_type(args[0]) if args else 1
     if not GLOBAL_CAR:
-        GLOBAL_CAR = ActiveCar(connection.protocol)
+        GLOBAL_CAR = ActiveCar(connection.protocol, car_type=v_type)
     px, py, pz = connection.world_object.position.get()
     ori = connection.world_object.orientation if hasattr(connection.world_object, 'orientation') else None
     ox = ori.x if ori else 0.0
@@ -591,144 +679,113 @@ def spawncar_command(connection, *args):
                 ground_z = cz - 0.2
                 break
     yaw = math.atan2(ox, -oy) if hasattr(connection.world_object, 'orientation') else 0.0
-    GLOBAL_CAR.spawn_at(spawn_x, spawn_y, ground_z, yaw=yaw)
-    connection.send_chat(f"[AUTO CLÁSICO] Auto clásico vintage desplegado con 350 HP.")
+    GLOBAL_CAR.spawn_at(spawn_x, spawn_y, ground_z, yaw=yaw, car_type=v_type)
+    connection.send_chat(f"[{GLOBAL_CAR.tag}] {GLOBAL_CAR.name} desplegado con {int(GLOBAL_CAR.hp)} HP.")
 
 @command('honk', 'horn', 'bocina')
-@player_only
 def honk_command(connection):
-    """Honk the classic vintage car horn."""
     global GLOBAL_CAR
-    if GLOBAL_CAR and getattr(connection, 'is_driving_car', False):
+    if GLOBAL_CAR and GLOBAL_CAR.active:
         GLOBAL_CAR.honk()
     else:
-        connection.send_chat("Debes ser el conductor del auto clásico para tocar la bocina.")
+        return "No hay ningún vehículo activo en este momento."
 
 @command('damagecar', 'dmgcar')
 def damagecar_command(connection, amount="50"):
-    """Inflict damage on the classic car."""
     global GLOBAL_CAR
     if GLOBAL_CAR and GLOBAL_CAR.active:
         try:
             dmg = float(amount)
+            GLOBAL_CAR.take_damage(dmg)
+            connection.send_chat(f"[{GLOBAL_CAR.tag}] Infligiste {dmg:.0f} de daño. HP restante: {int(GLOBAL_CAR.hp)}/{int(GLOBAL_CAR.max_hp)}.")
         except ValueError:
-            dmg = 50.0
-        GLOBAL_CAR.take_damage(dmg, attacker=connection)
-        return f"Auto clásico dañado por {dmg:.0f} HP."
-    return "No hay auto clásico activo."
+            return "Uso: /damagecar <cantidad>"
+    else:
+        return "No hay ningún vehículo activo en este momento."
 
 @command('setcarhp')
 def setcarhp_command(connection, amount="350"):
-    """Set the classic car HP directly."""
     global GLOBAL_CAR
     if GLOBAL_CAR and GLOBAL_CAR.active:
         try:
             val = float(amount)
+            GLOBAL_CAR.hp = min(GLOBAL_CAR.max_hp, max(1.0, val))
+            GLOBAL_CAR.update_tier()
+            connection.send_chat(f"[{GLOBAL_CAR.tag}] HP establecido a: {int(GLOBAL_CAR.hp)}/{int(GLOBAL_CAR.max_hp)}.")
         except ValueError:
-            val = 350.0
-        GLOBAL_CAR.hp = max(0.0, min(350.0, val))
-        GLOBAL_CAR.update_tier()
-        GLOBAL_CAR.broadcast_sync()
-        connection.send_chat(f"[AUTO CLÁSICO] Salud ajustada a {int(GLOBAL_CAR.hp)}/350 [Nivel {GLOBAL_CAR.tier}]")
-        return
-    return "No hay auto clásico activo."
+            return "Uso: /setcarhp <cantidad>"
+    else:
+        return "No hay ningún vehículo activo en este momento."
 
 def apply_script(protocol, connection, config):
     class CarProtocol(protocol):
         def on_map_change(self, map):
             global GLOBAL_CAR
-            GLOBAL_CAR = None
-            return super().on_map_change(map)
+            if GLOBAL_CAR:
+                GLOBAL_CAR.stop_loop()
+                GLOBAL_CAR = None
+            return protocol.on_map_change(self, map)
 
     class CarConnection(connection):
         def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.car_inputs = {'up_w': False, 'down_s': False, 'left_a': False, 'right_d': False, 'click': False, 'jump': False, 'crouch': False}
+            connection.__init__(self, *args, **kwargs)
             self.is_driving_car = False
             self.is_car_passenger = False
             self.car_seat = -1
+            self.car_inputs = {
+                'up_w': False,
+                'down_s': False,
+                'left_a': False,
+                'right_d': False,
+                'click': False,
+                'jump': False,
+                'crouch': False
+            }
 
         def on_disconnect(self):
             global GLOBAL_CAR
-            if GLOBAL_CAR:
-                if self.is_driving_car or self.is_car_passenger:
+            if GLOBAL_CAR and GLOBAL_CAR.active:
+                if self == GLOBAL_CAR.driver or self == GLOBAL_CAR.passenger:
                     GLOBAL_CAR.disembark(self)
-            super().on_disconnect()
-
-        def on_walk_update(self, up, down, left, right):
-            if getattr(self, 'is_driving_car', False):
-                self.car_inputs['up_w'] = bool(up)
-                self.car_inputs['down_s'] = bool(down)
-                self.car_inputs['left_a'] = bool(left)
-                self.car_inputs['right_d'] = bool(right)
-            super().on_walk_update(up, down, left, right)
-
-        def on_animation_update(self, jump, crouch, sneak, sprint):
-            if getattr(self, 'is_driving_car', False):
-                self.car_inputs['jump'] = bool(jump)
-                self.car_inputs['crouch'] = bool(crouch)
-            super().on_animation_update(jump, crouch, sneak, sprint)
-
-        def on_fall(self, damage):
-            if getattr(self, 'is_driving_car', False) or getattr(self, 'is_car_passenger', False):
-                return False
-            return super().on_fall(damage)
-
-        def on_hit(self, hit_amount, hit_player, kill_type, grenade):
-            global GLOBAL_CAR
-            if (getattr(hit_player, 'is_driving_car', False) or getattr(hit_player, 'is_car_passenger', False)) and GLOBAL_CAR and GLOBAL_CAR.active:
-                car_dmg = hit_amount * 0.85
-                GLOBAL_CAR.take_damage(car_dmg, attacker=self)
-            return super().on_hit(hit_amount, hit_player, kill_type, grenade)
+            return connection.on_disconnect(self)
 
         def on_kill(self, killer, kill_type, grenade):
             global GLOBAL_CAR
-            if getattr(self, 'is_driving_car', False) and GLOBAL_CAR:
-                dead_p = self
-                dead_p.is_driving_car = False
-                dead_p.fly = False
-                GLOBAL_CAR.driver = None
-                
-                if killer and not killer.disconnected:
-                    self.protocol.broadcast_chat(f"[AUTO CLÁSICO] ¡{killer.name} abatió al conductor {dead_p.name} de un certero disparo al parabrisas!")
-                    
-                # Promote passenger to driver
-                if GLOBAL_CAR.passenger and not GLOBAL_CAR.passenger.disconnected and GLOBAL_CAR.passenger.hp:
-                    promoted = GLOBAL_CAR.passenger
-                    GLOBAL_CAR.passenger = None
-                    GLOBAL_CAR.driver = promoted
-                    promoted.is_driving_car = True
-                    promoted.is_car_passenger = False
-                    promoted.car_seat = 0
-                    promoted.car_inputs = {'up_w': False, 'down_s': False, 'left_a': False, 'right_d': False, 'click': False, 'jump': False, 'crouch': False}
-                    
-                    driver_pos, _ = GLOBAL_CAR.get_seat_positions()
-                    try:
-                        promoted.world_object.set_position(*driver_pos)
-                        promoted.set_location(driver_pos)
-                    except Exception:
-                        pass
-                    promoted.send_chat("[AUTO CLÁSICO] ¡El conductor cayó! ¡Te has pasado al volante y has TOMADO EL CONTROL!")
-                    self.protocol.broadcast_chat(f"[AUTO CLÁSICO] ¡{promoted.name} se pasó al volante y tomó los mandos!")
-                GLOBAL_CAR.broadcast_sync()
-                
-            elif getattr(self, 'is_car_passenger', False) and GLOBAL_CAR:
-                self.is_car_passenger = False
-                self.fly = False
-                GLOBAL_CAR.passenger = None
-                if killer and not killer.disconnected:
-                    self.protocol.broadcast_chat(f"[AUTO CLÁSICO] ¡{killer.name} abatió al copiloto {self.name} de un disparo por la ventanilla!")
-                GLOBAL_CAR.broadcast_sync()
-                
-            return super().on_kill(killer, kill_type, grenade)
+            if GLOBAL_CAR and GLOBAL_CAR.active:
+                if self == GLOBAL_CAR.driver or self == GLOBAL_CAR.passenger:
+                    GLOBAL_CAR.disembark(self)
+            return connection.on_kill(self, killer, kill_type, grenade)
 
-        def on_shoot_set(self, fire):
-            global GLOBAL_CAR
-            if getattr(self, 'is_driving_car', False):
-                self.car_inputs['click'] = bool(fire)
-                if fire and GLOBAL_CAR:
-                    GLOBAL_CAR.honk()
-                return
-            super().on_shoot_set(fire)
+        def on_walk(self, walk):
+            if self.is_driving_car:
+                self.car_inputs['up_w'] = getattr(walk, 'up', False)
+                self.car_inputs['down_s'] = getattr(walk, 'down', False)
+                self.car_inputs['left_a'] = getattr(walk, 'left', False)
+                self.car_inputs['right_d'] = getattr(walk, 'right', False)
+                return False
+            elif self.is_car_passenger:
+                return False
+            return connection.on_walk(self, walk)
+
+        def on_primary(self, value):
+            if self.is_driving_car:
+                self.car_inputs['click'] = bool(value)
+                return False
+            return connection.on_primary(self, value)
+
+        def on_secondary(self, value):
+            if self.is_driving_car:
+                return False
+            return connection.on_secondary(self, value)
+
+        def on_jump(self):
+            if self.is_driving_car or self.is_car_passenger:
+                return False
+            return connection.on_jump(self)
+
+        def on_crouch(self):
+            if self.is_driving_car or self.is_car_passenger:
+                return False
+            return connection.on_crouch(self)
 
     return CarProtocol, CarConnection

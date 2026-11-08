@@ -726,8 +726,13 @@ def spawn_command(connection, *args):
             connection.protocol.broadcast_chat("[AIR BATTLE] ¡Atento a los vuelos rasantes sobre tu cabeza y los picados en barrena!")
             return
 
-    # --- AUTO CLÁSICO VINTAGE (STREET CRUISER) ---
-    if any(k in full_arg for k in ('car', 'auto', 'carro', 'coche', 'clasico', 'classic')):
+    # --- VEHÍCULOS DE TIERRA (5 MODELOS) ---
+    veh_keywords = ('car', 'auto', 'carro', 'coche', 'clasico', 'classic', 'chevelle',
+                    'toyota', 'macho', 'lc79', 'landcruiser',
+                    'isv', 'militar', 'buggy', 'army',
+                    'gmc', 'sierra', 'denali', 'pickup',
+                    'fiat', 'uno', 'turbo')
+    if any(k in full_arg for k in veh_keywords):
         try:
             import sys
             import os
@@ -737,8 +742,17 @@ def spawn_command(connection, *args):
             car_module = sys.modules.get('car')
             if not car_module:
                 import car as car_module
+            
+            # Determine vehicle type from arguments
+            v_type = 1
+            for a in args:
+                parsed = car_module.parse_vehicle_type(a)
+                if parsed != 1 or a.lower() in ('1', 'chevelle', 'malibu', 'clasico'):
+                    v_type = parsed
+                    break
+
             if not car_module.GLOBAL_CAR:
-                car_module.GLOBAL_CAR = car_module.ActiveCar(connection.protocol)
+                car_module.GLOBAL_CAR = car_module.ActiveCar(connection.protocol, car_type=v_type)
                 
             px, py, pz = connection.world_object.position.get()
             ori = connection.world_object.orientation if hasattr(connection.world_object, 'orientation') else None
@@ -757,14 +771,16 @@ def spawn_command(connection, *args):
                         ground_z = cz - 0.2
                         break
             yaw = math.atan2(ox, -oy) if hasattr(connection.world_object, 'orientation') else 0.0
-            car_module.GLOBAL_CAR.spawn_at(spawn_x, spawn_y, ground_z, yaw=yaw)
+            car_module.GLOBAL_CAR.spawn_at(spawn_x, spawn_y, ground_z, yaw=yaw, car_type=v_type)
             
-            connection.send_chat(f"[AUTO CLÁSICO] Auto clásico vintage desplegado en ({spawn_x:.1f}, {spawn_y:.1f}, {ground_z:.1f}) con 350 HP.")
-            connection.send_chat("[AUTO CLÁSICO] ¡Presiona 'E' o escribe /car para subirte al volante!")
-            connection.protocol.broadcast_chat(f"[AUTO CLÁSICO] {connection.name} desplegó un auto clásico vintage de calle. ¡Presiona 'E' para subirte!")
+            v_name = car_module.GLOBAL_CAR.name
+            tag = car_module.GLOBAL_CAR.tag
+            connection.send_chat(f"[{tag}] {v_name} desplegado en ({spawn_x:.1f}, {spawn_y:.1f}, {ground_z:.1f}) con {int(car_module.GLOBAL_CAR.hp)} HP.")
+            connection.send_chat(f"[{tag}] ¡Presiona 'E' o escribe /car {v_type} para subirte al volante!")
+            connection.protocol.broadcast_chat(f"[{tag}] {connection.name} desplegó un {v_name}. ¡Presiona 'E' para subirte!")
             return
         except Exception as e:
-            connection.send_chat(f"[AUTO CLÁSICO] Error al desplegar auto: {e}")
+            connection.send_chat(f"[VEHÍCULO] Error al desplegar: {e}")
             return
 
     entity = args[0].lower()
