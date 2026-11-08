@@ -95,17 +95,21 @@ class ActiveCar:
     def update_tier(self):
         ratio = self.hp / self.max_hp
         old_tier = self.tier
-        if ratio > 0.70:
-            self.tier = 3
-        elif ratio > 0.28:
-            self.tier = 2
+        if ratio > 0.52:
+            self.tier = 3 # Óptimo: 100% velocidad, sin humo
+        elif ratio > 0.18:
+            self.tier = 2 # Motor Dañado: echa humo del capó y se pone un pelín más lento (75% potencia)
         elif ratio > 0.0:
-            self.tier = 1
+            self.tier = 1 # Crítico: motor en llamas y humo denso (50% potencia)
         else:
-            self.tier = 0
+            self.tier = 0 # Destruido / Explosión
             
         if self.tier != old_tier and self.tier > 0:
-            tier_names = {3: "Óptimo", 2: "Motor Dañado (Humo)", 1: "Crítico (Motor en Llamas)"}
+            tier_names = {
+                3: "Óptimo (100% Potencia)",
+                2: "Motor Dañado (Echando Humo, Velocidad Reducida)",
+                1: "Crítico (Motor en Llamas, 50% Potencia)"
+            }
             self.protocol.broadcast_chat(f"[AUTO CLÁSICO] ¡Estado del vehículo cambiado a Nivel {self.tier}: {tier_names[self.tier]}! HP: {int(self.hp)}/{int(self.max_hp)}")
 
     def take_damage(self, amount, attacker=None):
@@ -170,14 +174,16 @@ class ActiveCar:
                     except Exception:
                         pass
                         
-        # 4. Eliminate driver and passenger
+        # 4. Disembark and inflict moderate damage to occupants (survive with damage)
+        occupant_damage = 30.0 # Quita un poquito de vida a los tripulantes (~30 HP)
         if self.driver and not self.driver.disconnected:
             p = self.driver
             self.driver = None
             p.is_driving_car = False
             p.fly = False
             try:
-                p.kill(killer=None, kill_type=GRENADE_KILL, grenade=None)
+                p.send_chat(f"[AUTO CLÁSICO] ¡¡BOOM!! El auto explotó por los daños. Sufriste {int(occupant_damage)} HP de daño pero lograste saltar a tiempo.")
+                p.hit(occupant_damage, None, GRENADE_KILL)
             except Exception:
                 pass
                 
@@ -187,7 +193,8 @@ class ActiveCar:
             cp.is_car_passenger = False
             cp.fly = False
             try:
-                cp.kill(killer=None, kill_type=GRENADE_KILL, grenade=None)
+                cp.send_chat(f"[AUTO CLÁSICO] ¡¡BOOM!! El auto explotó por los daños. Sufriste {int(occupant_damage)} HP de daño pero lograste saltar a tiempo.")
+                cp.hit(occupant_damage, None, GRENADE_KILL)
             except Exception:
                 pass
                 
@@ -225,18 +232,18 @@ class ActiveCar:
         right_x = dir_y
         right_y = -dir_x
         
-        # Driver: offset -0.70 blocks right, -0.30 blocks forward, -1.35 blocks up (cabin bench)
+        # Driver: offset -0.85 blocks right, -0.35 blocks forward, -1.60 blocks up (1.2x cabin bench)
         driver_pos = (
-            self.x - right_x * 0.70 - dir_x * 0.30,
-            self.y - right_y * 0.70 - dir_y * 0.30,
-            self.z - 1.35
+            self.x - right_x * 0.85 - dir_x * 0.35,
+            self.y - right_y * 0.85 - dir_y * 0.35,
+            self.z - 1.60
         )
         
-        # Passenger: offset +0.70 blocks right, -0.30 blocks forward, -1.35 blocks up (copiloto bench)
+        # Passenger: offset +0.85 blocks right, -0.35 blocks forward, -1.60 blocks up (1.2x copiloto bench)
         pass_pos = (
-            self.x + right_x * 0.70 - dir_x * 0.30,
-            self.y + right_y * 0.70 - dir_y * 0.30,
-            self.z - 1.35
+            self.x + right_x * 0.85 - dir_x * 0.35,
+            self.y + right_y * 0.85 - dir_y * 0.35,
+            self.z - 1.60
         )
         
         return driver_pos, pass_pos
@@ -263,19 +270,20 @@ class ActiveCar:
         if self.passenger and (self.passenger.disconnected or not self.passenger.hp):
             self.passenger = None
 
-        power_factor = 1.0 if self.tier == 3 else (0.80 if self.tier == 2 else 0.55)
+        # Power factor: Tier 2 is "un pelín más lento" (75%), Tier 1 is 50%
+        power_factor = 1.0 if self.tier == 3 else (0.75 if self.tier == 2 else 0.50)
         
         dir_x = math.sin(self.yaw)
         dir_y = -math.cos(self.yaw)
         right_x = dir_y
         right_y = -dir_x
 
-        # 1. Sample ground height at all 4 wheels
-        # Wheel offsets: front/rear +/- 2.2 blocks, left/right +/- 1.4 blocks
-        z_fl = self.get_ground_elevation(self.x + dir_x * 2.2 - right_x * 1.4, self.y + dir_y * 2.2 - right_y * 1.4)
-        z_fr = self.get_ground_elevation(self.x + dir_x * 2.2 + right_x * 1.4, self.y + dir_y * 2.2 + right_y * 1.4)
-        z_rl = self.get_ground_elevation(self.x - dir_x * 2.2 - right_x * 1.4, self.y - dir_y * 2.2 - right_y * 1.4)
-        z_rr = self.get_ground_elevation(self.x - dir_x * 2.2 + right_x * 1.4, self.y - dir_y * 2.2 + right_y * 1.4)
+        # 1. Sample ground height at all 4 wheels (1.2x scaled wheelbase and track)
+        # Wheel offsets: front/rear +/- 2.6 blocks, left/right +/- 1.6 blocks
+        z_fl = self.get_ground_elevation(self.x + dir_x * 2.6 - right_x * 1.6, self.y + dir_y * 2.6 - right_y * 1.6)
+        z_fr = self.get_ground_elevation(self.x + dir_x * 2.6 + right_x * 1.6, self.y + dir_y * 2.6 + right_y * 1.6)
+        z_rl = self.get_ground_elevation(self.x - dir_x * 2.6 - right_x * 1.6, self.y - dir_y * 2.6 - right_y * 1.6)
+        z_rr = self.get_ground_elevation(self.x - dir_x * 2.6 + right_x * 1.6, self.y - dir_y * 2.6 + right_y * 1.6)
         
         ground_z = (z_fl + z_fr + z_rl + z_rr) * 0.25
         
@@ -367,21 +375,22 @@ class ActiveCar:
         next_x = self.x + self.vx * self.tick_dt
         next_y = self.y + self.vy * self.tick_dt
         
-        # Check height in front of the car
-        probe_x = next_x + dir_x * (2.2 if self.forward_speed >= 0 else -2.2)
-        probe_y = next_y + dir_y * (2.2 if self.forward_speed >= 0 else -2.2)
+        # Check height in front of the car (1.2x scale probe)
+        probe_dist = 2.6 if self.forward_speed >= 0 else -2.6
+        probe_x = next_x + dir_x * probe_dist
+        probe_y = next_y + dir_y * probe_dist
         front_obstacle_z = self.get_ground_elevation(probe_x, probe_y)
         
         height_diff = self.z - front_obstacle_z # Positive if obstacle is higher (remember -Z is sky)
         
-        if height_diff > 1.35 and abs(self.forward_speed) > 1.5:
-            # Wall obstacle collision: halts forward momentum
+        if height_diff > 1.60 and abs(self.forward_speed) > 1.5:
+            # Wall obstacle collision (> 1.6 blocks high): halts forward momentum
             impact_speed = abs(self.forward_speed)
-            self.forward_speed *= -0.20 # Slight bounce back
-            if impact_speed > 14.0:
-                self.take_damage(impact_speed * 1.5)
+            self.forward_speed *= -0.25 # Clean bounce back
+            if impact_speed > 12.0:
+                self.take_damage(impact_speed * 1.2)
         else:
-            # Clear or gentle slope/stair: integrate position
+            # Clear or gentle slope/1-block steps: integrate position smoothly
             self.x = max(10.0, min(502.0, next_x))
             self.y = max(10.0, min(502.0, next_y))
             
