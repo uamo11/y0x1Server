@@ -322,19 +322,48 @@ class ActiveHelicopter:
             horiz_speed_sq = self.vx**2 + self.vy**2
             horiz_speed = math.sqrt(horiz_speed_sq)
 
+            # Inclinación vertical del ratón del piloto:
+            # Al mantener Clic Izquierdo y mover el ratón adelante:
+            # El helicóptero baja (desciende en picado) y baja más mientras más adelante se mueve el ratón,
+            # ganando velocidad aerodinámica sustancialmente (hasta +130% de aceleración frontal).
+            raw_ori_z = getattr(ori, 'z', 0.0)
             if inp.get('click'):
-                # Clic Izquierdo Presionado: Cíclico hacia adelante (Nose down)
+                # En picado activo con Clic Izquierdo: la inclinación vertical del ratón rige el picado
+                mouse_dive = abs(raw_ori_z)
+                mouse_pullup = 0.0
+            else:
+                mouse_dive = max(0.0, raw_ori_z)
+                mouse_pullup = max(0.0, -raw_ori_z)
+
+            dive_boost = 1.0
+            dive_descent = 0.0
+
+            if inp.get('click'):
+                # Clic Izquierdo Presionado: Cíclico hacia adelante activo
+                # Cuanto más adelante se mueve el ratón (mouse_dive más alto), mayor es la inclinación
+                base_pitch = 0.24 * power_factor # Inclinación base de crucero (~14°)
+                extra_pitch = (0.38 * mouse_dive) * power_factor # Hasta +22° adicionales en picado fuerte (total ~36°)
+                target_pitch = base_pitch + extra_pitch
+
+                # Si además presiona W, empuje extra de crucero rápido
                 if inp.get('up_w') or inp.get('jump'):
-                    # Clic + W: Empuje de crucero rápido agresivo
-                    target_pitch = 0.38 * power_factor # ~22° inclinación hacia abajo
-                else:
-                    # Clic sólo: Inclinación frontal constante
-                    target_pitch = 0.28 * power_factor # ~16° inclinación hacia abajo
+                    target_pitch += 0.06 * power_factor
+
+                # CUANTO MÁS ADELANTE EL RATÓN: MÁS BAJA Y MÁS VELOCIDAD GANA
+                # 1. Tasa de descenso proporcional a cuánto se empuja el ratón adelante:
+                dive_descent = (17.5 * mouse_dive) * power_factor # Descenso vertical directo acelerado
+
+                # 2. Multiplicador de velocidad (gana velocidad en picado aerodinámico):
+                dive_boost = 1.0 + (1.30 * mouse_dive) * power_factor # Aumenta aceleración frontal hasta +130%
+
                 self.is_flying = True
             elif (inp.get('down_s') or inp.get('crouch')) and horiz_speed > 2.5:
                 # S presionada a velocidad: ¡Maniobra táctica de frenado aerodinámico (Flare)!
                 # Morro se eleva hacia arriba usando el disco del rotor como freno de aire
                 target_pitch = -0.24 * power_factor # ~-14° inclinación hacia arriba
+            elif mouse_pullup > 0.15 and horiz_speed > 2.0:
+                # Tirar del ratón hacia atrás para levantar el morro
+                target_pitch = -0.18 * mouse_pullup * power_factor
             else:
                 # Estabilización pendular automática hacia horizontal
                 target_pitch = 0.0
@@ -395,14 +424,15 @@ class ActiveHelicopter:
 
                 # Descomposición física del vector de empuje del rotor en 3D:
                 # El empuje actúa en la dirección normal al disco del rotor (inclinado por pitch y roll)
-                forward_acc = thrust * math.sin(self.pitch)
+                forward_acc = (thrust * math.sin(self.pitch)) * dive_boost
                 lateral_acc = thrust * math.sin(self.roll)
                 vertical_lift = thrust * math.cos(self.pitch) * math.cos(self.roll)
 
-                # Aceleraciones resultantes
+                # Aceleraciones resultantes:
                 acc_x = (dir_x * forward_acc) + (right_x * lateral_acc)
                 acc_y = (dir_y * forward_acc) + (right_y * lateral_acc)
-                acc_z = GRAVITY - vertical_lift
+                # Al descender en picado con el ratón adelante, se suma dive_descent:
+                acc_z = (GRAVITY - vertical_lift) + dive_descent
 
                 # Efecto Suelo (Ground Effect): colchón de aire a baja altitud (< 3.0 bloques)
                 dist_ground = ground_z - self.z
@@ -416,12 +446,13 @@ class ActiveHelicopter:
                 self.vz += acc_z * self.tick_dt
 
                 # Resistencia Aerodinámica (Parasite Drag):
-                # Limita naturalmente la velocidad punta a ~28-32 bloques/s de forma suave
-                drag_h = 0.20 + 0.024 * horiz_speed
+                # Limita naturalmente la velocidad punta, pero en picado permite mayor velocidad terminal (38-42 b/s)
+                drag_base = 0.20 / max(1.0, dive_boost * 0.85)
+                drag_h = drag_base + (0.022 / max(1.0, dive_boost * 0.85)) * horiz_speed
                 self.vx *= max(0.0, 1.0 - drag_h * self.tick_dt)
                 self.vy *= max(0.0, 1.0 - drag_h * self.tick_dt)
 
-                drag_v = 0.45
+                drag_v = 0.40
                 self.vz *= max(0.0, 1.0 - drag_v * self.tick_dt)
 
             # Integración de posición continua
