@@ -127,6 +127,7 @@ dependencies = [
 
 [project.scripts]
 piqueserver = "piqueserver.run:main"
+yserver = "piqueserver.run:main"
 
 [project.optional-dependencies]
 # '/from' command
