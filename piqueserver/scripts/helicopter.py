@@ -726,6 +726,40 @@ def spawn_command(connection, *args):
             connection.protocol.broadcast_chat("[AIR BATTLE] ¡Atento a los vuelos rasantes sobre tu cabeza y los picados en barrena!")
             return
 
+    # --- AUTO CLÁSICO VINTAGE (STREET CRUISER) ---
+    if any(k in full_arg for k in ('car', 'auto', 'carro', 'coche', 'clasico', 'classic')):
+        try:
+            import car as car_module
+            if not car_module.GLOBAL_CAR:
+                car_module.GLOBAL_CAR = car_module.ActiveCar(connection.protocol)
+                
+            px, py, pz = connection.world_object.position.get()
+            ori = connection.world_object.orientation if hasattr(connection.world_object, 'orientation') else None
+            ox = ori.x if ori else 0.0
+            oy = ori.y if ori else -1.0
+            norm = math.sqrt(ox**2 + oy**2)
+            dir_x, dir_y = (ox / norm, oy / norm) if norm > 0.001 else (0.0, -1.0)
+            
+            spawn_x = px + dir_x * 6.0
+            spawn_y = py + dir_y * 6.0
+            ground_z = pz
+            if hasattr(connection.protocol, 'map'):
+                m = connection.protocol.map
+                for cz in range(max(1, int(pz) - 4), min(62, int(pz) + 8)):
+                    if m.get_solid(int(spawn_x), int(spawn_y), cz):
+                        ground_z = cz - 0.2
+                        break
+            yaw = math.atan2(ox, -oy) if hasattr(connection.world_object, 'orientation') else 0.0
+            car_module.GLOBAL_CAR.spawn_at(spawn_x, spawn_y, ground_z, yaw=yaw)
+            
+            connection.send_chat(f"[AUTO CLÁSICO] Auto clásico vintage desplegado en ({spawn_x:.1f}, {spawn_y:.1f}, {ground_z:.1f}) con 350 HP.")
+            connection.send_chat("[AUTO CLÁSICO] ¡Presiona 'E' o escribe /car para subirte al volante!")
+            connection.protocol.broadcast_chat(f"[AUTO CLÁSICO] {connection.name} desplegó un auto clásico vintage de calle. ¡Presiona 'E' para subirte!")
+            return
+        except Exception as e:
+            connection.send_chat(f"[AUTO CLÁSICO] Error al desplegar auto: {e}")
+            return
+
     entity = args[0].lower()
     if entity in ('helicopter', 'heli', 'chopper', 'elicoptero'):
         if not GLOBAL_HELI:
