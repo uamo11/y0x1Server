@@ -16,11 +16,20 @@ Features:
 - Seamless network synchronization via [CAR_SYNC] at 20 Hz.
 """
 
+import sys
+import os
 import math
 from twisted.internet.task import LoopingCall
 from piqueserver.commands import command, player_only
 from pyspades.contained import BlockAction, GrenadePacket
 from pyspades.constants import GRENADE_DESTROY, GRENADE_KILL
+
+# Ensure scripts directory is on sys.path and this module is available as 'car'
+_scripts_dir = os.path.dirname(os.path.abspath(__file__))
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+if __name__ in sys.modules:
+    sys.modules['car'] = sys.modules[__name__]
 
 class ActiveCar:
     def __init__(self, protocol, car_id=1):
@@ -508,7 +517,7 @@ GLOBAL_CAR = None
 
 @command('car', 'auto', 'carro', 'coche', 'drive')
 @player_only
-def car_command(connection):
+def car_command(connection, *args):
     """
     Board or disembark from the classic vintage street car.
     Usage: /car or /auto
@@ -521,14 +530,60 @@ def car_command(connection):
         GLOBAL_CAR.disembark(connection)
         return
     else:
-        # Distance check
+        # Distance check & auto-spawn if inactive or requested
+        px, py, pz = connection.world_object.position.get()
+        ori = connection.world_object.orientation if hasattr(connection.world_object, 'orientation') else None
+        ox = ori.x if ori else 0.0
+        oy = ori.y if ori else -1.0
+        norm = math.sqrt(ox**2 + oy**2)
+        dir_x, dir_y = (ox / norm, oy / norm) if norm > 0.001 else (0.0, -1.0)
+        
+        if not GLOBAL_CAR.active or (args and args[0].lower() in ('spawn', 'here', 'aqui', '1')):
+            spawn_x = px + dir_x * 5.0
+            spawn_y = py + dir_y * 5.0
+            ground_z = pz
+            if hasattr(connection.protocol, 'map'):
+                m = connection.protocol.map
+                for cz in range(max(1, int(pz) - 4), min(62, int(pz) + 8)):
+                    if m.get_solid(int(spawn_x), int(spawn_y), cz):
+                        ground_z = cz - 0.2
+                        break
+            yaw = math.atan2(ox, -oy) if hasattr(connection.world_object, 'orientation') else 0.0
+            GLOBAL_CAR.spawn_at(spawn_x, spawn_y, ground_z, yaw=yaw)
+            connection.send_chat(f"[AUTO CLÁSICO] Auto clásico vintage desplegado en ({spawn_x:.1f}, {spawn_y:.1f}, {ground_z:.1f})")
+
         if not GLOBAL_CAR.driver and not GLOBAL_CAR.passenger:
-            px, py, pz = connection.world_object.position.get()
             dist = math.sqrt((px - GLOBAL_CAR.x)**2 + (py - GLOBAL_CAR.y)**2 + (pz - GLOBAL_CAR.z)**2)
             if dist > 20.0:
                 connection.send_chat(f"[AUTO CLÁSICO] Estás demasiado lejos del auto ({dist:.1f} bloques). Acércate para subirte.")
                 return
         GLOBAL_CAR.embark(connection)
+
+@command('spawncar')
+@player_only
+def spawncar_command(connection, *args):
+    """Spawn classic street car directly."""
+    global GLOBAL_CAR
+    if not GLOBAL_CAR:
+        GLOBAL_CAR = ActiveCar(connection.protocol)
+    px, py, pz = connection.world_object.position.get()
+    ori = connection.world_object.orientation if hasattr(connection.world_object, 'orientation') else None
+    ox = ori.x if ori else 0.0
+    oy = ori.y if ori else -1.0
+    norm = math.sqrt(ox**2 + oy**2)
+    dir_x, dir_y = (ox / norm, oy / norm) if norm > 0.001 else (0.0, -1.0)
+    spawn_x = px + dir_x * 5.0
+    spawn_y = py + dir_y * 5.0
+    ground_z = pz
+    if hasattr(connection.protocol, 'map'):
+        m = connection.protocol.map
+        for cz in range(max(1, int(pz) - 4), min(62, int(pz) + 8)):
+            if m.get_solid(int(spawn_x), int(spawn_y), cz):
+                ground_z = cz - 0.2
+                break
+    yaw = math.atan2(ox, -oy) if hasattr(connection.world_object, 'orientation') else 0.0
+    GLOBAL_CAR.spawn_at(spawn_x, spawn_y, ground_z, yaw=yaw)
+    connection.send_chat(f"[AUTO CLÁSICO] Auto clásico vintage desplegado con 350 HP.")
 
 @command('honk', 'horn', 'bocina')
 @player_only

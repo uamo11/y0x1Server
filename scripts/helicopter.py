@@ -729,7 +729,14 @@ def spawn_command(connection, *args):
     # --- AUTO CLÁSICO VINTAGE (STREET CRUISER) ---
     if any(k in full_arg for k in ('car', 'auto', 'carro', 'coche', 'clasico', 'classic')):
         try:
-            import car as car_module
+            import sys
+            import os
+            scripts_dir = os.path.dirname(os.path.abspath(__file__))
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            car_module = sys.modules.get('car')
+            if not car_module:
+                import car as car_module
             if not car_module.GLOBAL_CAR:
                 car_module.GLOBAL_CAR = car_module.ActiveCar(connection.protocol)
                 
