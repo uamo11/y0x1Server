@@ -216,26 +216,26 @@ class ActiveCar:
 
     def get_seat_positions(self):
         """
-        Calculates 3D coordinates for driver and passenger:
-        - Driver: Left front seat behind steering wheel.
-        - Passenger: Right front seat (copiloto).
+        Calculates 3D coordinates for driver and passenger in 1970s Muscle Coupe:
+        - Driver: Left front bench seat behind steering wheel.
+        - Passenger: Right front bench seat (copiloto).
         """
         dir_x = math.sin(self.yaw)
         dir_y = -math.cos(self.yaw)
         right_x = dir_y
         right_y = -dir_x
         
-        # Driver: offset -0.55 blocks right, +0.15 blocks forward, -0.65 blocks up
+        # Driver: offset -0.70 blocks right, -0.30 blocks forward, -0.65 blocks up
         driver_pos = (
-            self.x - right_x * 0.55 + dir_x * 0.15,
-            self.y - right_y * 0.55 + dir_y * 0.15,
+            self.x - right_x * 0.70 - dir_x * 0.30,
+            self.y - right_y * 0.70 - dir_y * 0.30,
             self.z - 0.65
         )
         
-        # Passenger: offset +0.55 blocks right, +0.15 blocks forward, -0.65 blocks up
+        # Passenger: offset +0.70 blocks right, -0.30 blocks forward, -0.65 blocks up
         pass_pos = (
-            self.x + right_x * 0.55 + dir_x * 0.15,
-            self.y + right_y * 0.55 + dir_y * 0.15,
+            self.x + right_x * 0.70 - dir_x * 0.30,
+            self.y + right_y * 0.70 - dir_y * 0.30,
             self.z - 0.65
         )
         
