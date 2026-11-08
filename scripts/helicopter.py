@@ -289,91 +289,140 @@ class ActiveHelicopter:
             ori = self.pilot.world_object.orientation
             power_factor = 1.0 if self.tier == 3 else (0.75 if self.tier == 2 else 0.50)
 
-            # --- 1. Control de Guiñada (Yaw Heading) desde el Ratón del Conductor ---
+            # --- 1. Control de Orientación / Giroscopio con el Ratón ---
             target_yaw = math.atan2(ori.x, -ori.y)
-            yaw_diff = (target_yaw - self.yaw + math.pi) % (2 * math.pi) - math.pi
-            turn_speed = yaw_diff * (5.5 * self.tick_dt)
-            self.yaw += turn_speed
+            yaw_diff = (target_yaw - self.yaw + math.pi) % (2.0 * math.pi) - math.pi
+            turn_rate = 5.2 * power_factor
+            turn_step = yaw_diff * (turn_rate * self.tick_dt)
+            self.yaw += turn_step
 
             # Efecto Tier 1: Fallo crítico de Rotor de Cola (Giro por Torque incontrolado)
             if self.tier == 1:
-                self.yaw += 2.8 * self.tick_dt
+                self.yaw += 3.8 * self.tick_dt
 
+            # Vectores directores en el plano horizontal
             dir_x = math.sin(self.yaw)
             dir_y = -math.cos(self.yaw)
             right_x = dir_y
             right_y = -dir_x
 
-            # --- 2. Colectivo Vertical Estilo GTA (W sube, S baja) ---
-            # En OpenSpades Z: -Z es hacia el cielo (ascender), +Z es hacia el suelo (descender)
-            on_ground = (self.z >= ground_z - 0.35)
+            # --- 2. Mandos Cíclicos (Cabeceo y Alabeo Dinámicos) ---
+            # En nuestro sistema visual:
+            # pitch > 0: Morro se inclina hacia el suelo (aceleración frontal / picado)
+            # pitch < 0: Morro se inclina hacia arriba (frenado aerodinámico / flare)
+            # roll > 0: Alabeo hacia la derecha (inclinación lateral derecha)
+            # roll < 0: Alabeo hacia la izquierda (inclinación lateral izquierda)
 
-            if inp.get('up_w') or inp.get('jump'):
-                # W SUBE: Aceleración progresiva de sustentación hacia arriba (despegue progresivo)
-                target_vz = -10.0 * power_factor
-                self.vz += (target_vz - self.vz) * (4.2 * self.tick_dt)
-                self.is_flying = True
-            elif inp.get('down_s') or inp.get('crouch'):
-                # S BAJA: Descenso progresivo y suave hacia el suelo hasta posarse
-                target_vz = 8.0
-                self.vz += (target_vz - self.vz) * (4.2 * self.tick_dt)
-            else:
-                # Vuelo estacionario automático (Hover Hold suave sin perder altura)
-                if not on_ground:
-                    target_vz = 0.0
-                    self.vz += (target_vz - self.vz) * (5.5 * self.tick_dt)
-                else:
-                    self.vz = 0.0
+            # Inclinación bancaria automática al girar con el ratón (curva dinámica como helicóptero real)
+            auto_bank = max(-0.40, min(0.40, (turn_step / max(0.001, self.tick_dt)) * 0.10))
 
-            # --- 3. Propulsión Horizontal Estilo GTA (Clic Izquierdo Mantenido Acelera) ---
             target_pitch = 0.0
-            target_roll = 0.0
+            target_roll = auto_bank
+
+            horiz_speed_sq = self.vx**2 + self.vy**2
+            horiz_speed = math.sqrt(horiz_speed_sq)
 
             if inp.get('click'):
-                # Clic Izquierdo Presionado: Aceleración progresiva hacia adelante en dirección de cámara
-                target_pitch = -0.32 * power_factor # Inclinación realista hacia adelante
-                target_speed = 22.0 * power_factor  # Velocidad de crucero fluida y rápida
-                target_vx = dir_x * target_speed
-                target_vy = dir_y * target_speed
-                self.vx += (target_vx - self.vx) * (3.8 * self.tick_dt)
-                self.vy += (target_vy - self.vy) * (3.8 * self.tick_dt)
+                # Clic Izquierdo Presionado: Cíclico hacia adelante (Nose down)
+                if inp.get('up_w') or inp.get('jump'):
+                    # Clic + W: Empuje de crucero rápido agresivo
+                    target_pitch = 0.38 * power_factor # ~22° inclinación hacia abajo
+                else:
+                    # Clic sólo: Inclinación frontal constante
+                    target_pitch = 0.28 * power_factor # ~16° inclinación hacia abajo
                 self.is_flying = True
+            elif (inp.get('down_s') or inp.get('crouch')) and horiz_speed > 2.5:
+                # S presionada a velocidad: ¡Maniobra táctica de frenado aerodinámico (Flare)!
+                # Morro se eleva hacia arriba usando el disco del rotor como freno de aire
+                target_pitch = -0.24 * power_factor # ~-14° inclinación hacia arriba
             else:
-                # Al soltar el clic: Inercia aerodinámica suave desacelerando hacia hover
+                # Estabilización pendular automática hacia horizontal
                 target_pitch = 0.0
-                drag = max(0.0, 1.0 - 2.2 * self.tick_dt)
-                self.vx *= drag
-                self.vy *= drag
 
-            # --- 4. Viraje Lateral con A y D (Rudder / Strafe) y Alabeo Dinámico ---
+            # Timón de pedales y alabeo manual con A y D (Rudder / Cyclic Roll)
             if inp.get('left_a'):
-                self.vx -= right_x * (9.5 * power_factor) * self.tick_dt
-                self.vy -= right_y * (9.5 * power_factor) * self.tick_dt
-                target_roll -= 0.22
+                target_roll -= 0.32 * power_factor
+                self.yaw -= 1.6 * power_factor * self.tick_dt
             if inp.get('right_d'):
-                self.vx += right_x * (9.5 * power_factor) * self.tick_dt
-                self.vy += right_y * (9.5 * power_factor) * self.tick_dt
-                target_roll += 0.22
-
-            # Alabeo bancario natural al girar con el ratón
-            target_roll -= (turn_speed * 4.0) * 0.35
-            target_roll = max(-0.45, min(0.45, target_roll))
+                target_roll += 0.32 * power_factor
+                self.yaw += 1.6 * power_factor * self.tick_dt
 
             # Inestabilidad en fuselaje dañado
             if self.tier == 2:
-                wobble = math.sin(self.time_elapsed * 5.0) * 1.5
-                self.vx += wobble * self.tick_dt
-                target_roll += math.sin(self.time_elapsed * 7.0) * 0.08
+                target_roll += math.sin(self.time_elapsed * 7.0) * 0.06
+                target_pitch += math.cos(self.time_elapsed * 5.0) * 0.04
             elif self.tier == 1:
-                wobble = math.sin(self.time_elapsed * 8.0) * 3.5
-                self.vx += wobble * self.tick_dt
-                self.vz += 6.5 * self.tick_dt # Pérdida constante de sustentación
-                target_pitch += math.sin(self.time_elapsed * 12.0) * 0.15
-                target_roll += math.cos(self.time_elapsed * 11.0) * 0.18
+                target_roll += math.sin(self.time_elapsed * 10.0) * 0.16
+                target_pitch += math.cos(self.time_elapsed * 8.0) * 0.14
 
-            # Interpolación progresiva de Cabeceo (Pitch) y Alabeo (Roll)
+            target_roll = max(-0.55, min(0.55, target_roll))
+
+            # Interpolación progresiva suave de ángulos (sin saltos bruscos)
             self.pitch += (target_pitch - self.pitch) * (6.5 * self.tick_dt)
             self.roll += (target_roll - self.roll) * (6.5 * self.tick_dt)
+
+            # --- 3. Físicas Aerodinámicas 6-DOF Reales (Empuje del Rotor Descompuesto) ---
+            # Gravedad mundial: +16.0 bloques/s² hacia el suelo (+Z)
+            GRAVITY = 16.0
+            HOVER_THRUST = 16.0
+
+            on_ground = (self.z >= ground_z - 0.30)
+
+            if on_ground and not inp.get('up_w') and not inp.get('jump') and not inp.get('click'):
+                # Posado sobre los patines en el suelo (Motor en ralentí)
+                thrust = 0.0
+                self.vz = 0.0
+                # Fricción de patines con el terreno
+                self.vx *= max(0.0, 1.0 - 7.0 * self.tick_dt)
+                self.vy *= max(0.0, 1.0 - 7.0 * self.tick_dt)
+                self.pitch *= max(0.0, 1.0 - 7.0 * self.tick_dt)
+                self.roll *= max(0.0, 1.0 - 7.0 * self.tick_dt)
+                if horiz_speed < 0.2:
+                    self.is_flying = False
+            else:
+                self.is_flying = True
+
+                # Ajuste del empuje colectivo del rotor principal
+                if inp.get('up_w') or inp.get('jump'):
+                    # W SUBE: Aceleración progresiva de sustentación vertical
+                    thrust = (HOVER_THRUST * 1.65) * power_factor
+                elif inp.get('down_s') or inp.get('crouch'):
+                    # S BAJA: Reducción controlada de empuje (descenso controlado)
+                    thrust = (HOVER_THRUST * 0.40) * power_factor
+                else:
+                    # Hover hold: empuje equilibrado con gravedad
+                    thrust = HOVER_THRUST * power_factor
+
+                # Descomposición física del vector de empuje del rotor en 3D:
+                # El empuje actúa en la dirección normal al disco del rotor (inclinado por pitch y roll)
+                forward_acc = thrust * math.sin(self.pitch)
+                lateral_acc = thrust * math.sin(self.roll)
+                vertical_lift = thrust * math.cos(self.pitch) * math.cos(self.roll)
+
+                # Aceleraciones resultantes
+                acc_x = (dir_x * forward_acc) + (right_x * lateral_acc)
+                acc_y = (dir_y * forward_acc) + (right_y * lateral_acc)
+                acc_z = GRAVITY - vertical_lift
+
+                # Efecto Suelo (Ground Effect): colchón de aire a baja altitud (< 3.0 bloques)
+                dist_ground = ground_z - self.z
+                if 0.0 < dist_ground < 3.0 and acc_z > 0.0:
+                    cushion = max(0.0, (3.0 - dist_ground) / 3.0) * 10.0
+                    acc_z = max(-3.0, acc_z - cushion)
+
+                # Integración de aceleración a velocidad
+                self.vx += acc_x * self.tick_dt
+                self.vy += acc_y * self.tick_dt
+                self.vz += acc_z * self.tick_dt
+
+                # Resistencia Aerodinámica (Parasite Drag):
+                # Limita naturalmente la velocidad punta a ~28-32 bloques/s de forma suave
+                drag_h = 0.20 + 0.024 * horiz_speed
+                self.vx *= max(0.0, 1.0 - drag_h * self.tick_dt)
+                self.vy *= max(0.0, 1.0 - drag_h * self.tick_dt)
+
+                drag_v = 0.45
+                self.vz *= max(0.0, 1.0 - drag_v * self.tick_dt)
 
             # Integración de posición continua
             self.x += self.vx * self.tick_dt
@@ -381,16 +430,14 @@ class ActiveHelicopter:
             self.z += self.vz * self.tick_dt
 
             # Contacto de patines con el suelo (Aterrizaje suave)
-            if self.z >= ground_z - 0.2:
-                self.z = ground_z - 0.2
+            if self.z >= ground_z - 0.20:
+                self.z = ground_z - 0.20
                 if self.vz > 0.0:
                     self.vz = 0.0
-                if not inp.get('up_w') and not inp.get('click'):
-                    self.vx *= 0.6
-                    self.vy *= 0.6
+                if not inp.get('up_w') and not inp.get('jump') and not inp.get('click'):
                     self.pitch *= 0.6
                     self.roll *= 0.6
-                    if abs(self.vx) < 0.2 and abs(self.vy) < 0.2:
+                    if horiz_speed < 0.25:
                         self.is_flying = False
 
             # Límites de vuelo del mapa
@@ -614,11 +661,37 @@ GLOBAL_HELI = None
 def spawn_command(connection, *args):
     """
     Spawn vehicles or entities in the world.
-    Usage: /spawn helicopter 1 or /spawn heli
+    Usage: /spawn helicopter 1 or /spawn batle avion
     """
     global GLOBAL_HELI
     if not args:
-        return "Uso: /spawn helicopter [id]"
+        return "Uso: /spawn helicopter [id] o /spawn batle avion"
+    
+    full_arg = " ".join(args).lower()
+    
+    # --- BATALLA AÉREA DE AVIONES CLÁSICOS (WWII DOGFIGHT) ---
+    if any(k in full_arg for k in ('avion', 'batle', 'battle', 'airbattle', 'planes', 'caza', 'cazas')):
+        if any(s in full_arg for s in ('stop', 'despawn', 'parar', 'off', '0')):
+            for p in connection.protocol.players.values():
+                if not p.disconnected:
+                    try:
+                        p.send_chat("[AIRBATTLE_SYNC] 0")
+                    except Exception:
+                        pass
+            connection.protocol.broadcast_chat("[AIR BATTLE] La batalla aérea de cazas ha finalizado.")
+            return
+        else:
+            for p in connection.protocol.players.values():
+                if not p.disconnected:
+                    try:
+                        p.send_chat("[AIRBATTLE_SYNC] 1")
+                    except Exception:
+                        pass
+            connection.protocol.broadcast_chat("[AIR BATTLE] ¡¡ALERTA AÉREA DE COMBATE!!")
+            connection.protocol.broadcast_chat("[AIR BATTLE] ¡Dos cazas de la Segunda Guerra Mundial se baten en combate sobre el mapa!")
+            connection.protocol.broadcast_chat("[AIR BATTLE] ¡Atento a los vuelos rasantes sobre tu cabeza y los picados en barrena!")
+            return
+
     entity = args[0].lower()
     if entity in ('helicopter', 'heli', 'chopper', 'elicoptero'):
         if not GLOBAL_HELI:
@@ -696,6 +769,14 @@ def damageheli_command(connection, amount="50"):
         GLOBAL_HELI.take_damage(dmg, attacker=connection)
         return f"Helicóptero dañado por {dmg:.0f} HP."
     return "No hay helicóptero activo."
+
+@command('battle', 'batle', 'airbattle')
+def battle_command(connection, *args):
+    """
+    Direct command to toggle WWII air dogfight battle in the sky.
+    Usage: /battle avion or /batle avion
+    """
+    return spawn_command(connection, 'batle', 'avion', *args)
 
 @command('sethelihp')
 def sethelihp_command(connection, amount="300"):
