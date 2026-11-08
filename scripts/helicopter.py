@@ -356,6 +356,9 @@ class ActiveHelicopter:
                 # 2. Multiplicador de velocidad (gana velocidad en picado aerodinámico):
                 dive_boost = 1.0 + (1.30 * mouse_dive) * power_factor # Aumenta aceleración frontal hasta +130%
 
+                if mouse_dive > 0.08 and self.sync_counter % 10 == 0:
+                    print(f"[HELI DIVE] mouse_dive={mouse_dive:.2f} | target_pitch={target_pitch:.2f} rad ({math.degrees(target_pitch):.1f}deg) | dive_descent={dive_descent:.1f} | boost={dive_boost:.2f}x | speed={horiz_speed:.1f} b/s | vz={self.vz:.2f} | z={self.z:.1f}")
+
                 self.is_flying = True
             elif (inp.get('down_s') or inp.get('crouch')) and horiz_speed > 2.5:
                 # S presionada a velocidad: ¡Maniobra táctica de frenado aerodinámico (Flare)!
