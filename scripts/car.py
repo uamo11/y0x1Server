@@ -16,6 +16,7 @@ Features:
 import sys
 import os
 import math
+import time
 from twisted.internet.task import LoopingCall
 from piqueserver.commands import command, player_only
 from pyspades.contained import BlockAction, GrenadePacket
@@ -567,12 +568,16 @@ class ActiveCar:
             player.send_chat(f"[{self.tag}] Te bajaste del vehículo.")
             self.protocol.broadcast_chat(f"[{self.tag}] {player.name} dejó el volante de {self.name}.")
             
-            # Place player to left of vehicle
+            # Place player safely on solid ground outside vehicle (no fall damage, no clipping)
+            player.last_car_exit_time = time.time()
             dir_x = math.sin(self.yaw)
             dir_y = -math.cos(self.yaw)
             right_x = dir_y
             right_y = -dir_x
-            exit_pos = (self.x - right_x * 2.2, self.y - right_y * 2.2, self.z - 0.5)
+            exit_x = self.x - right_x * 2.5
+            exit_y = self.y - right_y * 2.5
+            ground_z = self.get_ground_elevation(exit_x, exit_y)
+            exit_pos = (exit_x, exit_y, max(1.0, ground_z - 1.2))
             try:
                 player.world_object.set_position(*exit_pos)
                 player.set_location(exit_pos)
@@ -588,11 +593,15 @@ class ActiveCar:
             player.send_chat(f"[{self.tag}] Te bajaste del vehículo.")
             self.protocol.broadcast_chat(f"[{self.tag}] {player.name} se bajó de {self.name}.")
             
+            player.last_car_exit_time = time.time()
             dir_x = math.sin(self.yaw)
             dir_y = -math.cos(self.yaw)
             right_x = dir_y
             right_y = -dir_x
-            exit_pos = (self.x + right_x * 2.2, self.y + right_y * 2.2, self.z - 0.5)
+            exit_x = self.x + right_x * 2.5
+            exit_y = self.y + right_y * 2.5
+            ground_z = self.get_ground_elevation(exit_x, exit_y)
+            exit_pos = (exit_x, exit_y, max(1.0, ground_z - 1.2))
             try:
                 player.world_object.set_position(*exit_pos)
                 player.set_location(exit_pos)
@@ -731,6 +740,7 @@ def apply_script(protocol, connection, config):
             connection.__init__(self, *args, **kwargs)
             self.is_driving_car = False
             self.is_car_passenger = False
+            self.last_car_exit_time = 0.0
             self.car_seat = -1
             self.car_inputs = {
                 'up_w': False,
@@ -787,5 +797,11 @@ def apply_script(protocol, connection, config):
             if self.is_driving_car or self.is_car_passenger:
                 return False
             return connection.on_crouch(self)
+
+        def on_fall(self, damage):
+            # Completely negate fall damage while in a vehicle or for 3 seconds after exiting
+            if self.is_driving_car or self.is_car_passenger or (time.time() - getattr(self, 'last_car_exit_time', 0.0) < 3.0):
+                return False
+            return connection.on_fall(self, damage)
 
     return CarProtocol, CarConnection
