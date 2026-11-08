@@ -225,18 +225,18 @@ class ActiveCar:
         right_x = dir_y
         right_y = -dir_x
         
-        # Driver: offset -0.70 blocks right, -0.30 blocks forward, -0.65 blocks up
+        # Driver: offset -0.70 blocks right, -0.30 blocks forward, -1.35 blocks up (cabin bench)
         driver_pos = (
             self.x - right_x * 0.70 - dir_x * 0.30,
             self.y - right_y * 0.70 - dir_y * 0.30,
-            self.z - 0.65
+            self.z - 1.35
         )
         
-        # Passenger: offset +0.70 blocks right, -0.30 blocks forward, -0.65 blocks up
+        # Passenger: offset +0.70 blocks right, -0.30 blocks forward, -1.35 blocks up (copiloto bench)
         pass_pos = (
             self.x + right_x * 0.70 - dir_x * 0.30,
             self.y + right_y * 0.70 - dir_y * 0.30,
-            self.z - 0.65
+            self.z - 1.35
         )
         
         return driver_pos, pass_pos
