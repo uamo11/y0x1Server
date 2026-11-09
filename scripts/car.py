@@ -319,31 +319,31 @@ class ActiveCar:
 
     def get_seat_offset(self, seat_idx):
         # Returns (lateral, longitudinal, vertical) in meters/blocks
-        if self.car_type == 2: # Toyota LC79 (4 seats: 2 cab + 2 flatbed)
-            if seat_idx == 0:   return (-0.88, -0.10, 1.60) # Conductor
-            elif seat_idx == 1: return ( 0.88, -0.10, 1.60) # Copiloto
-            elif seat_idx == 2: return (-0.75, -2.10, 1.50) # Batea izquierda
-            elif seat_idx == 3: return ( 0.75, -2.10, 1.50) # Batea derecha
+        if self.car_type == 2: # Toyota LC79 (2 Cab + 2 Flatbed)
+            if seat_idx == 0:   return (-0.88, -0.10, 2.50) # Conductor
+            elif seat_idx == 1: return ( 0.88, -0.10, 2.50) # Copiloto
+            elif seat_idx == 2: return (-0.65, -3.35, 3.85) # Batea izquierda (de pie)
+            elif seat_idx == 3: return ( 0.65, -3.35, 3.85) # Batea derecha (de pie)
         elif self.car_type == 3: # Military ISV Buggy (6 seats: 3 rows of 2)
-            if seat_idx == 0:   return (-0.85,  0.45, 1.42) # Conductor
-            elif seat_idx == 1: return ( 0.85,  0.45, 1.42) # Copiloto táctico
-            elif seat_idx == 2: return (-0.85, -0.65, 1.42) # Fila media izq
-            elif seat_idx == 3: return ( 0.85, -0.65, 1.42) # Fila media der
-            elif seat_idx == 4: return (-0.80, -1.85, 1.42) # Fila trasera izq
-            elif seat_idx == 5: return ( 0.80, -1.85, 1.42) # Fila trasera der
-        elif self.car_type == 4: # GMC Sierra Denali Crew Cab (6 seats: 4 cab + 2 bed)
-            if seat_idx == 0:   return (-0.92,  0.40, 1.55) # Conductor
-            elif seat_idx == 1: return ( 0.92,  0.40, 1.55) # Copiloto
-            elif seat_idx == 2: return (-0.92, -1.85, 1.55) # Crew Cab trasera izq
-            elif seat_idx == 3: return ( 0.92, -1.85, 1.55) # Crew Cab trasera der
-            elif seat_idx == 4: return (-0.75, -4.20, 2.15) # Batea izquierda
-            elif seat_idx == 5: return ( 0.75, -4.20, 2.15) # Batea derecha
+            if seat_idx == 0:   return (-0.85,  0.95, 2.15) # Fila 1 Izq (Conductor)
+            elif seat_idx == 1: return ( 0.85,  0.95, 2.15) # Fila 1 Der (Copiloto)
+            elif seat_idx == 2: return (-0.85, -1.35, 2.15) # Fila 2 Izq
+            elif seat_idx == 3: return ( 0.85, -1.35, 2.15) # Fila 2 Der
+            elif seat_idx == 4: return (-0.80, -3.80, 2.25) # Fila 3 Izq
+            elif seat_idx == 5: return ( 0.80, -3.80, 2.25) # Fila 3 Der
+        elif self.car_type == 4: # GMC Sierra Denali Crew Cab (4 Cab + 2 Bed)
+            if seat_idx == 0:   return (-0.92,  0.80, 2.55) # Conductor
+            elif seat_idx == 1: return ( 0.92,  0.80, 2.55) # Copiloto
+            elif seat_idx == 2: return (-0.92, -1.60, 2.55) # Trasera cabina izq
+            elif seat_idx == 3: return ( 0.92, -1.60, 2.55) # Trasera cabina der
+            elif seat_idx == 4: return (-0.75, -4.40, 3.90) # Caja trasera izq (de pie)
+            elif seat_idx == 5: return ( 0.75, -4.40, 3.90) # Caja trasera der (de pie)
         elif self.car_type == 5: # Fiat Uno Turbo (2 seats)
-            if seat_idx == 0:   return (-0.68, -0.05, 1.25)
-            else:               return ( 0.68, -0.05, 1.25)
+            if seat_idx == 0:   return (-0.68, -0.05, 2.05)
+            else:               return ( 0.68, -0.05, 2.05)
         else: # 1: Chevelle SS (2 seats)
-            if seat_idx == 0:   return (-0.85, -0.35, 1.40)
-            else:               return ( 0.85, -0.35, 1.40)
+            if seat_idx == 0:   return (-0.85, -0.35, 2.30)
+            else:               return ( 0.85, -0.35, 2.30)
 
     def get_seat_position(self, seat_idx):
         dir_x = math.sin(self.yaw)
@@ -403,24 +403,28 @@ class ActiveCar:
         z_fr = self.get_ground_elevation(fr_x, fr_y)
         z_rl = self.get_ground_elevation(rl_x, rl_y)
         z_rr = self.get_ground_elevation(rr_x, rr_y)
+
+        # Sanitize probes against cliffs/edges so the vehicle never flips
+        z_center = self.get_ground_elevation(self.x, self.y)
+        if abs(z_fl - z_center) > 2.0: z_fl = z_center
+        if abs(z_fr - z_center) > 2.0: z_fr = z_center
+        if abs(z_rl - z_center) > 2.0: z_rl = z_center
+        if abs(z_rr - z_center) > 2.0: z_rr = z_center
         
         z_front = (z_fl + z_fr) * 0.5
         z_rear  = (z_rl + z_rr) * 0.5
         z_left  = (z_fl + z_rl) * 0.5
         z_right = (z_fr + z_rr) * 0.5
-        
-        # Settle the vehicle firmly on its suspension according to vehicle weight:
-        weight_settle = {
-            1: 0.04,
-            2: 0.04,
-            3: 0.05,
-            4: 0.08, # GMC Sierra Denali (2800 kg) settles firmly on heavy springs
-            5: 0.02  # Fiat Uno Turbo (845 kg)
-        }.get(self.car_type, 0.04)
 
-        target_ground_z = (z_front + z_rear) * 0.5 + weight_settle
+        target_ground_z = (z_front + z_rear) * 0.5
         target_pitch = math.atan2(z_front - z_rear, half_wb * 2.0)
         target_roll  = -math.atan2(z_right - z_left, half_tw * 2.0)
+
+        # Strict anti-flip clamping: vehicle can never exceed +-20 deg pitch or +-14 deg roll
+        max_pitch = 0.35
+        max_roll  = 0.25
+        target_pitch = max(-max_pitch, min(max_pitch, target_pitch))
+        target_roll  = max(-max_roll, min(max_roll, target_roll))
 
         # 2. Driver input processing
         if self.driver and not self.driver.disconnected and self.driver.hp:
@@ -477,8 +481,11 @@ class ActiveCar:
             self.forward_speed *= max(0.0, 1.0 - 6.0 * self.tick_dt)
             self.steer_angle *= max(0.0, 1.0 - 5.0 * self.tick_dt)
 
+        target_roll = max(-max_roll, min(max_roll, target_roll))
         self.pitch += (target_pitch - self.pitch) * (8.0 * self.tick_dt)
         self.roll += (target_roll - self.roll) * (8.0 * self.tick_dt)
+        self.pitch = max(-max_pitch, min(max_pitch, self.pitch))
+        self.roll = max(-max_roll, min(max_roll, self.roll))
 
         # 3. Position integration
         self.vx = dir_x * self.forward_speed
@@ -525,7 +532,7 @@ class ActiveCar:
         self.broadcast_sync()
 
     def broadcast_sync(self):
-        """Sends [CAR_SYNC] metadata to all connected clients."""
+        """Sends compact [CS] metadata to all connected clients (guaranteed < 80 chars, zero chat wrapping)."""
         driver_id = self.occupants[0].player_id if (self.occupants[0] and not self.occupants[0].disconnected and self.occupants[0].hp) else -1
         pass_id   = self.occupants[1].player_id if (self.occupants[1] and not self.occupants[1].disconnected and self.occupants[1].hp) else -1
         occ2_id   = self.occupants[2].player_id if (self.occupants[2] and not self.occupants[2].disconnected and self.occupants[2].hp) else -1
@@ -533,8 +540,14 @@ class ActiveCar:
         occ4_id   = self.occupants[4].player_id if (self.occupants[4] and not self.occupants[4].disconnected and self.occupants[4].hp) else -1
         occ5_id   = self.occupants[5].player_id if (self.occupants[5] and not self.occupants[5].disconnected and self.occupants[5].hp) else -1
         
-        # 21 tokens: id, x, y, z, yaw, pitch, roll, steer, driver, pass, hp, max_hp, tier, vx, vy, vz, model_type, occ2, occ3, occ4, occ5
-        sync_msg = f"[CAR_SYNC] {self.car_type} {self.x:.2f} {self.y:.2f} {self.z:.2f} {self.yaw:.2f} {self.pitch:.2f} {self.roll:.2f} {self.steer_angle:.2f} {driver_id} {pass_id} {int(self.hp)} {int(self.max_hp)} {self.tier} {self.vx:.2f} {self.vy:.2f} {self.vz:.2f} {self.car_type} {occ2_id} {occ3_id} {occ4_id} {occ5_id}"
+        # 16 tokens: type, x, y, z, yaw, pitch, roll, steer, hp, tier, occ0..occ5
+        # Total length ~68 chars. MAX_CHAT_SIZE is 90. Guaranteed to never split into multiple lines!
+        sync_msg = (
+            f"[CS] {self.car_type} {self.x:.1f} {self.y:.1f} {self.z:.1f} "
+            f"{self.yaw:.2f} {self.pitch:.2f} {self.roll:.2f} {self.steer_angle:.2f} "
+            f"{int(self.hp)} {self.tier} "
+            f"{driver_id} {pass_id} {occ2_id} {occ3_id} {occ4_id} {occ5_id}"
+        )
         
         for player in self.protocol.players.values():
             if not player.disconnected:
