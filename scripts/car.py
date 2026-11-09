@@ -553,7 +553,7 @@ class ActiveCar:
         }.get(self.car_type, ["Conductor", "Copiloto"])
         return names[seat_idx] if seat_idx < len(names) else f"Asiento {seat_idx+1}"
 
-    def embark(self, player):
+    def embark(self, player, preferred_seat=None):
         if self.hp <= 0.0 or not self.active:
             player.send_chat(f"[{self.tag}] El vehículo está destruido. Despliega uno nuevo con /spawn car [1-5].")
             return False
@@ -562,8 +562,13 @@ class ActiveCar:
             player.send_chat(f"[{self.tag}] Ya estás a bordo del vehículo.")
             return False
 
+        seat_order = list(range(self.max_capacity))
+        if preferred_seat is not None and 0 <= preferred_seat < self.max_capacity:
+            seat_order.remove(preferred_seat)
+            seat_order.insert(0, preferred_seat)
+
         # Find first free seat (seat 0 is driver, 1..N-1 are passengers)
-        for s in range(self.max_capacity):
+        for s in seat_order:
             if not self.occupants[s] or self.occupants[s].disconnected or not self.occupants[s].hp:
                 self.occupants[s] = player
                 player.car_seat = s
@@ -681,13 +686,30 @@ def car_command(connection, *args):
             GLOBAL_CAR.spawn_at(spawn_x, spawn_y, ground_z, yaw=yaw, car_type=v_type)
             connection.send_chat(f"[{GLOBAL_CAR.tag}] Desplegado en ({spawn_x:.1f}, {spawn_y:.1f}, {ground_z:.1f}) con {int(GLOBAL_CAR.hp)} HP.")
 
+        # Parse preferred seat if requested (e.g. /car bed, /car batea, /car atras)
+        pref_seat = None
+        if args:
+            arg0 = args[0].lower()
+            if arg0 in ('bed', 'batea', 'caja', 'atras', 'rear'):
+                if GLOBAL_CAR.car_type == 2:   pref_seat = 2 # Flatbed left
+                elif GLOBAL_CAR.car_type == 4: pref_seat = 4 # Truck bed left
+                elif GLOBAL_CAR.car_type == 3: pref_seat = 4 # Rear squad
+            elif arg0 in ('copilot', 'copiloto', 'pass', 'pasajero'):
+                pref_seat = 1
+            elif arg0 in ('driver', 'conductor', 'volante'):
+                pref_seat = 0
+            elif arg0.isdigit():
+                val = int(arg0)
+                if 1 <= val <= GLOBAL_CAR.max_capacity:
+                    pref_seat = val - 1
+
         dist = math.sqrt((px - GLOBAL_CAR.x)**2 + (py - GLOBAL_CAR.y)**2 + (pz - GLOBAL_CAR.z)**2)
         if dist > 10.0:
             try:
                 connection.set_location((GLOBAL_CAR.x, GLOBAL_CAR.y, GLOBAL_CAR.z - 1.5))
             except Exception:
                 pass
-        GLOBAL_CAR.embark(connection)
+        GLOBAL_CAR.embark(connection, preferred_seat=pref_seat)
 
 @command('spawncar')
 @player_only
