@@ -382,7 +382,16 @@ class ActiveCar:
         z_left  = (z_fl + z_rl) * 0.5
         z_right = (z_fr + z_rr) * 0.5
         
-        target_ground_z = (z_front + z_rear) * 0.5 - 0.2
+        # Settle the vehicle firmly on its suspension according to vehicle weight:
+        weight_settle = {
+            1: 0.04,
+            2: 0.04,
+            3: 0.05,
+            4: 0.08, # GMC Sierra Denali (2800 kg) settles firmly on heavy springs
+            5: 0.02  # Fiat Uno Turbo (845 kg)
+        }.get(self.car_type, 0.04)
+
+        target_ground_z = (z_front + z_rear) * 0.5 + weight_settle
         target_pitch = math.atan2(z_front - z_rear, half_wb * 2.0)
         target_roll  = -math.atan2(z_right - z_left, half_tw * 2.0)
 
