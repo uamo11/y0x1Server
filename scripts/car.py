@@ -129,6 +129,14 @@ class ActiveCar:
         self.vz = 0.0
         self.forward_speed = 0.0
         
+        self.max_capacity = {
+            1: 2, # Chevelle SS (2 seats)
+            2: 4, # Toyota LC79 (2 cab + 2 flatbed)
+            3: 6, # Military ISV Buggy (6 squad seats)
+            4: 6, # GMC Sierra Denali (4 crew cab + 2 bed)
+            5: 2  # Fiat Uno Turbo (2 seats)
+        }.get(self.car_type, 2)
+        self.occupants = [None] * 6
         self.driver = None
         self.passenger = None
         
@@ -309,39 +317,58 @@ class ActiveCar:
                     break
         return ground_z
 
-    def get_seat_positions(self):
+    def get_seat_offset(self, seat_idx):
+        # Returns (lateral, longitudinal, vertical) in meters/blocks
+        if self.car_type == 2: # Toyota LC79 (4 seats: 2 cab + 2 flatbed)
+            if seat_idx == 0:   return (-0.88, -0.10, 1.60) # Conductor
+            elif seat_idx == 1: return ( 0.88, -0.10, 1.60) # Copiloto
+            elif seat_idx == 2: return (-0.75, -2.10, 1.50) # Batea izquierda
+            elif seat_idx == 3: return ( 0.75, -2.10, 1.50) # Batea derecha
+        elif self.car_type == 3: # Military ISV Buggy (6 seats: 3 rows of 2)
+            if seat_idx == 0:   return (-0.85,  0.45, 1.42) # Conductor
+            elif seat_idx == 1: return ( 0.85,  0.45, 1.42) # Copiloto táctico
+            elif seat_idx == 2: return (-0.85, -0.65, 1.42) # Fila media izq
+            elif seat_idx == 3: return ( 0.85, -0.65, 1.42) # Fila media der
+            elif seat_idx == 4: return (-0.80, -1.85, 1.42) # Fila trasera izq
+            elif seat_idx == 5: return ( 0.80, -1.85, 1.42) # Fila trasera der
+        elif self.car_type == 4: # GMC Sierra Denali Crew Cab (6 seats: 4 cab + 2 bed)
+            if seat_idx == 0:   return (-0.92,  0.40, 1.55) # Conductor
+            elif seat_idx == 1: return ( 0.92,  0.40, 1.55) # Copiloto
+            elif seat_idx == 2: return (-0.92, -0.75, 1.55) # Crew Cab trasera izq
+            elif seat_idx == 3: return ( 0.92, -0.75, 1.55) # Crew Cab trasera der
+            elif seat_idx == 4: return (-0.85, -2.25, 1.50) # Batea izquierda
+            elif seat_idx == 5: return ( 0.85, -2.25, 1.50) # Batea derecha
+        elif self.car_type == 5: # Fiat Uno Turbo (2 seats)
+            if seat_idx == 0:   return (-0.68, -0.05, 1.25)
+            else:               return ( 0.68, -0.05, 1.25)
+        else: # 1: Chevelle SS (2 seats)
+            if seat_idx == 0:   return (-0.85, -0.35, 1.40)
+            else:               return ( 0.85, -0.35, 1.40)
+
+    def get_seat_position(self, seat_idx):
         dir_x = math.sin(self.yaw)
         dir_y = -math.cos(self.yaw)
         right_x = dir_y
         right_y = -dir_x
-        
-        seat_x = 0.85
-        seat_y = 0.35
-        seat_z = 1.60
-        if self.car_type == 2: # Toyota LC79
-            seat_x = 0.90; seat_y = 0.30; seat_z = 1.85
-        elif self.car_type == 3: # Military ISV
-            seat_x = 0.90; seat_y = 0.35; seat_z = 1.70
-        elif self.car_type == 4: # GMC Sierra Denali
-            seat_x = 0.98; seat_y = 0.40; seat_z = 1.80
-        elif self.car_type == 5: # Fiat Uno Turbo
-            seat_x = 0.72; seat_y = 0.25; seat_z = 1.45
-            
-        driver_pos = (
-            self.x - right_x * seat_x - dir_x * seat_y,
-            self.y - right_y * seat_x - dir_y * seat_y,
-            self.z - seat_z
+        lat, lon, vert = self.get_seat_offset(seat_idx)
+        return (
+            self.x + right_x * lat + dir_x * lon,
+            self.y + right_y * lat + dir_y * lon,
+            self.z - vert
         )
-        pass_pos = (
-            self.x + right_x * seat_x - dir_x * seat_y,
-            self.y + right_y * seat_x - dir_y * seat_y,
-            self.z - seat_z
-        )
-        return driver_pos, pass_pos
+
+    def get_seat_positions(self):
+        return self.get_seat_position(0), self.get_seat_position(1)
 
     def honk(self):
         if self.horn_cooldown <= 0.0:
             self.horn_cooldown = 0.8
+            for p in self.protocol.players.values():
+                if not p.disconnected:
+                    try:
+                        p.send_chat(f"[CAR_HORN] {self.car_type}")
+                    except Exception:
+                        pass
             self.protocol.broadcast_chat(f"[{self.tag}] *¡¡BEEP-BEEP!!*")
 
     def update_physics(self):
@@ -480,31 +507,34 @@ class ActiveCar:
         self.z += (target_ground_z - self.z) * z_blend
         self.vz = (target_ground_z - self.z)
 
-        # 4. Sync passengers
-        driver_pos, pass_pos = self.get_seat_positions()
-        if self.driver and not self.driver.disconnected and self.driver.hp:
-            try:
-                self.driver.world_object.set_position(*driver_pos)
-                self.driver.set_location(driver_pos)
-            except Exception:
-                pass
-                
-        if self.passenger and not self.passenger.disconnected and self.passenger.hp:
-            try:
-                self.passenger.world_object.set_position(*pass_pos)
-                self.passenger.set_location(pass_pos)
-            except Exception:
-                pass
+        # 4. Sync all occupants (Driver and up to 5 Passengers)
+        self.driver = self.occupants[0]
+        self.passenger = self.occupants[1]
+        for s in range(self.max_capacity):
+            occ = self.occupants[s]
+            if occ and not occ.disconnected and occ.hp:
+                s_pos = self.get_seat_position(s)
+                try:
+                    occ.world_object.set_position(*s_pos)
+                    occ.set_location(s_pos)
+                except Exception:
+                    pass
+            elif occ and (occ.disconnected or not occ.hp):
+                self.occupants[s] = None
 
         self.broadcast_sync()
 
     def broadcast_sync(self):
         """Sends [CAR_SYNC] metadata to all connected clients."""
-        driver_id = self.driver.player_id if (self.driver and not self.driver.disconnected and self.driver.hp) else -1
-        pass_id = self.passenger.player_id if (self.passenger and not self.passenger.disconnected and self.passenger.hp) else -1
+        driver_id = self.occupants[0].player_id if (self.occupants[0] and not self.occupants[0].disconnected and self.occupants[0].hp) else -1
+        pass_id   = self.occupants[1].player_id if (self.occupants[1] and not self.occupants[1].disconnected and self.occupants[1].hp) else -1
+        occ2_id   = self.occupants[2].player_id if (self.occupants[2] and not self.occupants[2].disconnected and self.occupants[2].hp) else -1
+        occ3_id   = self.occupants[3].player_id if (self.occupants[3] and not self.occupants[3].disconnected and self.occupants[3].hp) else -1
+        occ4_id   = self.occupants[4].player_id if (self.occupants[4] and not self.occupants[4].disconnected and self.occupants[4].hp) else -1
+        occ5_id   = self.occupants[5].player_id if (self.occupants[5] and not self.occupants[5].disconnected and self.occupants[5].hp) else -1
         
-        # 17 tokens: id, x, y, z, yaw, pitch, roll, steer, driver, pass, hp, max_hp, tier, vx, vy, vz, model_type
-        sync_msg = f"[CAR_SYNC] {self.car_type} {self.x:.2f} {self.y:.2f} {self.z:.2f} {self.yaw:.2f} {self.pitch:.2f} {self.roll:.2f} {self.steer_angle:.2f} {driver_id} {pass_id} {int(self.hp)} {int(self.max_hp)} {self.tier} {self.vx:.2f} {self.vy:.2f} {self.vz:.2f} {self.car_type}"
+        # 21 tokens: id, x, y, z, yaw, pitch, roll, steer, driver, pass, hp, max_hp, tier, vx, vy, vz, model_type, occ2, occ3, occ4, occ5
+        sync_msg = f"[CAR_SYNC] {self.car_type} {self.x:.2f} {self.y:.2f} {self.z:.2f} {self.yaw:.2f} {self.pitch:.2f} {self.roll:.2f} {self.steer_angle:.2f} {driver_id} {pass_id} {int(self.hp)} {int(self.max_hp)} {self.tier} {self.vx:.2f} {self.vy:.2f} {self.vz:.2f} {self.car_type} {occ2_id} {occ3_id} {occ4_id} {occ5_id}"
         
         for player in self.protocol.players.values():
             if not player.disconnected:
@@ -513,102 +543,87 @@ class ActiveCar:
                 except Exception:
                     pass
 
+    def get_seat_name(self, seat_idx):
+        names = {
+            1: ["Conductor", "Copiloto"],
+            2: ["Conductor (Cabina)", "Copiloto (Cabina)", "Batea Trasera Izquierda", "Batea Trasera Derecha"],
+            3: ["Conductor Táctico", "Copiloto Artillero", "Escuadrón Medio Izq", "Escuadrón Medio Der", "Asalto Trasero Izq", "Asalto Trasero Der"],
+            4: ["Conductor", "Copiloto", "Crew Cab Trasera Izq", "Crew Cab Trasera Der", "Caja Trasera Izq", "Caja Trasera Der"],
+            5: ["Conductor", "Copiloto"]
+        }.get(self.car_type, ["Conductor", "Copiloto"])
+        return names[seat_idx] if seat_idx < len(names) else f"Asiento {seat_idx+1}"
+
     def embark(self, player):
         if self.hp <= 0.0 or not self.active:
             player.send_chat(f"[{self.tag}] El vehículo está destruido. Despliega uno nuevo con /spawn car [1-5].")
             return False
             
-        if player == self.driver or player == self.passenger:
+        if player in self.occupants:
             player.send_chat(f"[{self.tag}] Ya estás a bordo del vehículo.")
             return False
-            
-        # Driver seat
-        if not self.driver or self.driver.disconnected or not self.driver.hp:
-            self.driver = player
-            player.car_inputs = {'up_w': False, 'down_s': False, 'left_a': False, 'right_d': False, 'click': False, 'jump': False, 'crouch': False}
-            player.is_driving_car = True
-            player.is_car_passenger = False
-            player.car_seat = 0
-            player.fly = True
-            
-            driver_pos, _ = self.get_seat_positions()
-            try:
-                player.world_object.set_position(*driver_pos)
-                player.set_location(driver_pos)
-            except Exception:
-                pass
+
+        # Find first free seat (seat 0 is driver, 1..N-1 are passengers)
+        for s in range(self.max_capacity):
+            if not self.occupants[s] or self.occupants[s].disconnected or not self.occupants[s].hp:
+                self.occupants[s] = player
+                player.car_seat = s
+                player.is_driving_car = (s == 0)
+                player.is_car_passenger = (s > 0)
+                player.fly = True
                 
-            player.send_chat(f"[{self.tag}] ¡Tomaste el volante de: {self.name}!")
-            player.send_chat(f"[{self.tag}] Controles: [W] Acelerar, [S] Frenar/Reversa, [A/D] Girar, [Clic Izq] Bocina, [E] Salir")
-            self.protocol.broadcast_chat(f"[{self.tag}] {player.name} se subió como conductor de {self.name}.")
-            self.broadcast_sync()
-            return True
-            
-        # Passenger seat
-        elif not self.passenger or self.passenger.disconnected or not self.passenger.hp:
-            self.passenger = player
-            player.is_driving_car = False
-            player.is_car_passenger = True
-            player.car_seat = 1
-            player.fly = True
-            
-            _, pass_pos = self.get_seat_positions()
-            try:
-                player.world_object.set_position(*pass_pos)
-                player.set_location(pass_pos)
-            except Exception:
-                pass
-                
-            player.send_chat(f"[{self.tag}] ¡Te subiste como copiloto/pasajero en {self.name}!")
-            player.send_chat(f"[{self.tag}] ¡Las ventanillas están abiertas! Puedes apuntar y disparar con tu arma.")
-            self.protocol.broadcast_chat(f"[{self.tag}] {player.name} se subió como acompañante en {self.name}.")
-            self.broadcast_sync()
-            return True
-            
-        else:
-            player.send_chat(f"[{self.tag}] El vehículo está lleno (2/2 ocupantes).")
-            return False
+                s_name = self.get_seat_name(s)
+                s_pos = self.get_seat_position(s)
+                try:
+                    player.world_object.set_position(*s_pos)
+                    player.set_location(s_pos)
+                except Exception:
+                    pass
+
+                if s == 0:
+                    self.driver = player
+                    player.car_inputs = {'up_w': False, 'down_s': False, 'left_a': False, 'right_d': False, 'click': False, 'jump': False, 'crouch': False}
+                    player.send_chat(f"[{self.tag}] ¡Tomaste el volante de: {self.name}!")
+                    player.send_chat(f"[{self.tag}] Controles: [W] Acelerar, [S] Frenar/Reversa, [A/D] Girar, [Clic Izq] Bocina, [E] Salir")
+                    self.protocol.broadcast_chat(f"[{self.tag}] {player.name} se subió como conductor de {self.name}.")
+                else:
+                    if s == 1:
+                        self.passenger = player
+                    player.send_chat(f"[{self.tag}] ¡Te subiste en: {s_name}! ({s+1}/{self.max_capacity} plazas)")
+                    player.send_chat(f"[{self.tag}] ¡Posición despejada! Puedes apuntar y disparar con tu arma.")
+                    self.protocol.broadcast_chat(f"[{self.tag}] {player.name} se subió en {s_name} de {self.name}.")
+
+                self.broadcast_sync()
+                return True
+
+        player.send_chat(f"[{self.tag}] El vehículo está lleno ({self.max_capacity}/{self.max_capacity} ocupantes).")
+        return False
 
     def disembark(self, player):
-        if player == self.driver:
-            self.driver = None
-            player.is_driving_car = False
+        if player in self.occupants:
+            seat_idx = self.occupants.index(player)
+            self.occupants[seat_idx] = None
+            if seat_idx == 0:
+                self.driver = None
+                player.is_driving_car = False
+            else:
+                if seat_idx == 1:
+                    self.passenger = None
+                player.is_car_passenger = False
+
             player.fly = False
-            player.send_chat(f"[{self.tag}] Te bajaste del vehículo.")
-            self.protocol.broadcast_chat(f"[{self.tag}] {player.name} dejó el volante de {self.name}.")
-            
-            # Place player safely on solid ground outside vehicle (no fall damage, no clipping)
-            player.last_car_exit_time = time.time()
-            dir_x = math.sin(self.yaw)
-            dir_y = -math.cos(self.yaw)
-            right_x = dir_y
-            right_y = -dir_x
-            exit_x = self.x - right_x * 2.5
-            exit_y = self.y - right_y * 2.5
-            ground_z = self.get_ground_elevation(exit_x, exit_y)
-            exit_pos = (exit_x, exit_y, max(1.0, ground_z - 1.2))
-            try:
-                player.world_object.set_position(*exit_pos)
-                player.set_location(exit_pos)
-            except Exception:
-                pass
-            self.broadcast_sync()
-            return True
-            
-        elif player == self.passenger:
-            self.passenger = None
-            player.is_car_passenger = False
-            player.fly = False
-            player.send_chat(f"[{self.tag}] Te bajaste del vehículo.")
+            s_name = self.get_seat_name(seat_idx)
+            player.send_chat(f"[{self.tag}] Te bajaste de {s_name}.")
             self.protocol.broadcast_chat(f"[{self.tag}] {player.name} se bajó de {self.name}.")
-            
+
+            # Place player safely on ground
             player.last_car_exit_time = time.time()
             dir_x = math.sin(self.yaw)
             dir_y = -math.cos(self.yaw)
             right_x = dir_y
             right_y = -dir_x
-            exit_x = self.x + right_x * 2.5
-            exit_y = self.y + right_y * 2.5
+            lat_exit = -2.5 if (seat_idx % 2 == 0) else 2.5
+            exit_x = self.x + right_x * lat_exit
+            exit_y = self.y + right_y * lat_exit
             ground_z = self.get_ground_elevation(exit_x, exit_y)
             exit_pos = (exit_x, exit_y, max(1.0, ground_z - 1.2))
             try:
@@ -666,11 +681,10 @@ def car_command(connection, *args):
             GLOBAL_CAR.spawn_at(spawn_x, spawn_y, ground_z, yaw=yaw, car_type=v_type)
             connection.send_chat(f"[{GLOBAL_CAR.tag}] Desplegado en ({spawn_x:.1f}, {spawn_y:.1f}, {ground_z:.1f}) con {int(GLOBAL_CAR.hp)} HP.")
 
-        if not GLOBAL_CAR.driver and not GLOBAL_CAR.passenger:
-            dist = math.sqrt((px - GLOBAL_CAR.x)**2 + (py - GLOBAL_CAR.y)**2 + (pz - GLOBAL_CAR.z)**2)
-            if dist > 20.0:
-                connection.send_chat(f"[{GLOBAL_CAR.tag}] Estás lejos del vehículo ({dist:.1f} bloques). Acércate para subirte.")
-                return
+        dist = math.sqrt((px - GLOBAL_CAR.x)**2 + (py - GLOBAL_CAR.y)**2 + (pz - GLOBAL_CAR.z)**2)
+        if dist > 20.0:
+            connection.send_chat(f"[{GLOBAL_CAR.tag}] Estás lejos del vehículo ({dist:.1f} bloques). Acércate para subirte.")
+            return
         GLOBAL_CAR.embark(connection)
 
 @command('spawncar')
@@ -764,14 +778,14 @@ def apply_script(protocol, connection, config):
         def on_disconnect(self):
             global GLOBAL_CAR
             if GLOBAL_CAR and GLOBAL_CAR.active:
-                if self == GLOBAL_CAR.driver or self == GLOBAL_CAR.passenger:
+                if self in GLOBAL_CAR.occupants:
                     GLOBAL_CAR.disembark(self)
             return connection.on_disconnect(self)
 
         def on_kill(self, killer, kill_type, grenade):
             global GLOBAL_CAR
             if GLOBAL_CAR and GLOBAL_CAR.active:
-                if self == GLOBAL_CAR.driver or self == GLOBAL_CAR.passenger:
+                if self in GLOBAL_CAR.occupants:
                     GLOBAL_CAR.disembark(self)
             return connection.on_kill(self, killer, kill_type, grenade)
 
