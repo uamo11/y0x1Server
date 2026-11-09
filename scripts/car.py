@@ -682,9 +682,11 @@ def car_command(connection, *args):
             connection.send_chat(f"[{GLOBAL_CAR.tag}] Desplegado en ({spawn_x:.1f}, {spawn_y:.1f}, {ground_z:.1f}) con {int(GLOBAL_CAR.hp)} HP.")
 
         dist = math.sqrt((px - GLOBAL_CAR.x)**2 + (py - GLOBAL_CAR.y)**2 + (pz - GLOBAL_CAR.z)**2)
-        if dist > 20.0:
-            connection.send_chat(f"[{GLOBAL_CAR.tag}] Estás lejos del vehículo ({dist:.1f} bloques). Acércate para subirte.")
-            return
+        if dist > 10.0:
+            try:
+                connection.set_location((GLOBAL_CAR.x, GLOBAL_CAR.y, GLOBAL_CAR.z - 1.5))
+            except Exception:
+                pass
         GLOBAL_CAR.embark(connection)
 
 @command('spawncar')
