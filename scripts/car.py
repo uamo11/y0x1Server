@@ -334,10 +334,10 @@ class ActiveCar:
         elif self.car_type == 4: # GMC Sierra Denali Crew Cab (6 seats: 4 cab + 2 bed)
             if seat_idx == 0:   return (-0.92,  0.40, 1.55) # Conductor
             elif seat_idx == 1: return ( 0.92,  0.40, 1.55) # Copiloto
-            elif seat_idx == 2: return (-0.92, -0.75, 1.55) # Crew Cab trasera izq
-            elif seat_idx == 3: return ( 0.92, -0.75, 1.55) # Crew Cab trasera der
-            elif seat_idx == 4: return (-0.75, -2.25, 2.10) # Batea izquierda
-            elif seat_idx == 5: return ( 0.75, -2.25, 2.10) # Batea derecha
+            elif seat_idx == 2: return (-0.92, -1.85, 1.55) # Crew Cab trasera izq
+            elif seat_idx == 3: return ( 0.92, -1.85, 1.55) # Crew Cab trasera der
+            elif seat_idx == 4: return (-0.75, -4.20, 2.15) # Batea izquierda
+            elif seat_idx == 5: return ( 0.75, -4.20, 2.15) # Batea derecha
         elif self.car_type == 5: # Fiat Uno Turbo (2 seats)
             if seat_idx == 0:   return (-0.68, -0.05, 1.25)
             else:               return ( 0.68, -0.05, 1.25)
