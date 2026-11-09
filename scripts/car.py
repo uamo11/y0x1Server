@@ -336,8 +336,8 @@ class ActiveCar:
             elif seat_idx == 1: return ( 0.92,  0.40, 1.55) # Copiloto
             elif seat_idx == 2: return (-0.92, -0.75, 1.55) # Crew Cab trasera izq
             elif seat_idx == 3: return ( 0.92, -0.75, 1.55) # Crew Cab trasera der
-            elif seat_idx == 4: return (-0.85, -2.25, 1.50) # Batea izquierda
-            elif seat_idx == 5: return ( 0.85, -2.25, 1.50) # Batea derecha
+            elif seat_idx == 4: return (-0.75, -2.25, 2.10) # Batea izquierda
+            elif seat_idx == 5: return ( 0.75, -2.25, 2.10) # Batea derecha
         elif self.car_type == 5: # Fiat Uno Turbo (2 seats)
             if seat_idx == 0:   return (-0.68, -0.05, 1.25)
             else:               return ( 0.68, -0.05, 1.25)
@@ -783,6 +783,14 @@ def apply_script(protocol, connection, config):
             return protocol.on_map_change(self, map)
 
     class CarConnection(connection):
+        def on_chat(self, value, global_message):
+            msg = value.strip().lower()
+            if msg.startswith('/spawn car') or msg.startswith('/spawn auto') or msg.startswith('/spawn carro') or msg.startswith('/spawn coche'):
+                parts = msg.split()
+                v_type = parts[2] if len(parts) > 2 else '1'
+                spawncar_command(self, v_type)
+                return False
+            return connection.on_chat(self, value, global_message)
         def __init__(self, *args, **kwargs):
             connection.__init__(self, *args, **kwargs)
             self.is_driving_car = False
